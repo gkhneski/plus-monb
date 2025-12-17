@@ -182,6 +182,9 @@ export default function OnlineKalenderPage() {
   const [formNotiz, setFormNotiz] = useState<string>("")
   const [formStartHHMM, setFormStartHHMM] = useState<string>("10:00")
   const [formDurationMin, setFormDurationMin] = useState<number>(45)
+
+  // room/resource (werden nur gesendet wenn Spalten existieren)
+  const [formRoomId, setFormRoomId] = useState<string>("unassigned")
   const [formResourceId, setFormResourceId] = useState<string>("unassigned")
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -212,26 +215,57 @@ export default function OnlineKalenderPage() {
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart])
   const weekLabel = useMemo(() => `${formatDM(weekStart)} – ${formatDM(weekEnd)}`, [weekStart, weekEnd])
 
-  // Ressourcen-Feld automatisch erkennen (resource_id / room_id / device_id)
-  const resourceField = useMemo<null | "resource_id" | "room_id" | "device_id">(() => {
-    const fields = ["resource_id", "room_id", "device_id"] as const
-    for (const f of fields) {
-      if (buchungen.some((b: any) => Object.prototype.hasOwnProperty.call(b, f))) return f
-    }
+  // DB Felder erkennen (damit kein Supabase Error wenn Spalten noch nicht existieren)
+  const hasRoomIdField = useMemo(() => {
+    return buchungen.some((b: any) => Object.prototype.hasOwnProperty.call(b, "room_id"))
+  }, [buchungen])
+
+  const hasResourceIdField = useMemo(() => {
+    return buchungen.some((b: any) => Object.prototype.hasOwnProperty.call(b, "resource_id"))
+  }, [buchungen])
+
+  // für deine alte Auto-Erkennung (room_id / device_id) behalten wir trotzdem (falls du es vorher anders hattest)
+  const legacyResourceField = useMemo<null | "device_id">(() => {
+    if (buchungen.some((b: any) => Object.prototype.hasOwnProperty.call(b, "device_id"))) return "device_id"
     return null
   }, [buchungen])
 
-  const resources = useMemo(() => {
-    if (!resourceField) return [{ id: "unassigned", name: "Nicht zugewiesen" }]
-
+  const rooms = useMemo(() => {
+    if (!hasRoomIdField) return [{ id: "unassigned", name: "Nicht zugewiesen" }]
     const set = new Set<string>()
     for (const b of buchungen as any[]) {
-      const v = b?.[resourceField]
+      const v = b?.room_id
       if (v) set.add(String(v))
     }
     const vals = Array.from(set).sort()
     return [{ id: "unassigned", name: "Nicht zugewiesen" }, ...vals.map((v) => ({ id: v, name: v }))]
-  }, [buchungen, resourceField])
+  }, [buchungen, hasRoomIdField])
+
+  const resources = useMemo(() => {
+    // wenn resource_id existiert -> nutze die ids
+    if (hasResourceIdField) {
+      const set = new Set<string>()
+      for (const b of buchungen as any[]) {
+        const v = b?.resource_id
+        if (v) set.add(String(v))
+      }
+      const vals = Array.from(set).sort()
+      return [{ id: "unassigned", name: "Nicht zugewiesen" }, ...vals.map((v) => ({ id: v, name: v }))]
+    }
+
+    // fallback: device_id (falls du sowas hast)
+    if (legacyResourceField === "device_id") {
+      const set = new Set<string>()
+      for (const b of buchungen as any[]) {
+        const v = b?.device_id
+        if (v) set.add(String(v))
+      }
+      const vals = Array.from(set).sort()
+      return [{ id: "unassigned", name: "Nicht zugewiesen" }, ...vals.map((v) => ({ id: v, name: v }))]
+    }
+
+    return [{ id: "unassigned", name: "Nicht zugewiesen" }]
+  }, [buchungen, hasResourceIdField, legacyResourceField])
 
   const filteredMitarbeiter = useMemo(() => {
     let list = [...mitarbeiter]
@@ -244,7 +278,6 @@ export default function OnlineKalenderPage() {
     return list
   }, [mitarbeiter, selectedFilialeId, selectedMitarbeiterId])
 
-  // ---- Daten laden (unverändert aus deinem Page-Stand) ----
   async function loadAll() {
     setLoading(true)
     setError(null)
@@ -312,7 +345,6 @@ export default function OnlineKalenderPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ---- Filtered bookings ----
   const dayBookings = useMemo(() => {
     const ymd = toLocalYMD(selectedDate)
 
@@ -322,8 +354,10 @@ export default function OnlineKalenderPage() {
       return toLocalYMD(s) === ymd
     })
 
-    if (selectedFilialeId !== "all") list = list.filter((b: any) => String((b as any).filiale_id ?? "") === selectedFilialeId)
-    if (selectedMitarbeiterId !== "all") list = list.filter((b: any) => String((b as any).mitarbeiter_id ?? "") === selectedMitarbeiterId)
+    if (selectedFilialeId !== "all")
+      list = list.filter((b: any) => String((b as any).filiale_id ?? "") === selectedFilialeId)
+    if (selectedMitarbeiterId !== "all")
+      list = list.filter((b: any) => String((b as any).mitarbeiter_id ?? "") === selectedMitarbeiterId)
 
     const q = searchText.trim().toLowerCase()
     if (q) {
@@ -351,13 +385,14 @@ export default function OnlineKalenderPage() {
   const bookingsByResource = useMemo(() => {
     const map = new Map<string, BuchungWithRelations[]>()
     for (const r of resources) map.set(r.id, [])
+
     for (const b of dayBookings as any[]) {
-      const rid = resourceField ? String(b?.[resourceField] ?? "unassigned") : "unassigned"
+      const rid = hasResourceIdField ? String(b?.resource_id ?? "unassigned") : legacyResourceField ? String(b?.device_id ?? "unassigned") : "unassigned"
       if (!map.has(rid)) map.set(rid, [])
       map.get(rid)!.push(b)
     }
     return map
-  }, [dayBookings, resources, resourceField])
+  }, [dayBookings, resources, hasResourceIdField, legacyResourceField])
 
   const weekBookings = useMemo(() => {
     const startY = toLocalYMD(weekStart)
@@ -370,8 +405,10 @@ export default function OnlineKalenderPage() {
       return y >= startY && y < endY
     })
 
-    if (selectedFilialeId !== "all") list = list.filter((b: any) => String((b as any).filiale_id ?? "") === selectedFilialeId)
-    if (selectedMitarbeiterId !== "all") list = list.filter((b: any) => String((b as any).mitarbeiter_id ?? "") === selectedMitarbeiterId)
+    if (selectedFilialeId !== "all")
+      list = list.filter((b: any) => String((b as any).filiale_id ?? "") === selectedFilialeId)
+    if (selectedMitarbeiterId !== "all")
+      list = list.filter((b: any) => String((b as any).mitarbeiter_id ?? "") === selectedMitarbeiterId)
 
     const q = searchText.trim().toLowerCase()
     if (q) {
@@ -399,8 +436,7 @@ export default function OnlineKalenderPage() {
     return map
   }, [weekBookings, weekDays])
 
-  // ---- Panel open helpers (statt Modal) ----
-  function openCreatePanelAt(opts: { date: Date; hhmm: string; empId?: string; resourceId?: string }) {
+  function openCreatePanelAt(opts: { date: Date; hhmm: string; empId?: string; roomId?: string; resourceId?: string }) {
     setError(null)
     setPanelOpen(true)
     setEditingId(null)
@@ -419,7 +455,10 @@ export default function OnlineKalenderPage() {
 
     const defaultEmp =
       opts.empId ??
-      (selectedMitarbeiterId !== "all" ? selectedMitarbeiterId : String((filteredMitarbeiter[0] as any)?.id ?? (mitarbeiter[0] as any)?.id ?? ""))
+      (selectedMitarbeiterId !== "all"
+        ? selectedMitarbeiterId
+        : String((filteredMitarbeiter[0] as any)?.id ?? (mitarbeiter[0] as any)?.id ?? ""))
+
     setFormMitarbeiterId(defaultEmp)
 
     if (selectedFilialeId !== "all") setFormFilialeId(selectedFilialeId)
@@ -428,8 +467,8 @@ export default function OnlineKalenderPage() {
       setFormFilialeId(String(emp?.filiale_id ?? ""))
     }
 
-    const rid = opts.resourceId ?? "unassigned"
-    setFormResourceId(rid)
+    setFormRoomId(opts.roomId ?? "unassigned")
+    setFormResourceId(opts.resourceId ?? "unassigned")
   }
 
   function openEditPanel(b: BuchungWithRelations) {
@@ -454,8 +493,14 @@ export default function OnlineKalenderPage() {
     setFormStartHHMM(formatHHMM(s))
     setFormDurationMin(Math.max(15, minutesBetween(s, e)))
 
-    const rid = resourceField ? String((b as any)[resourceField] ?? "unassigned") : "unassigned"
-    setFormResourceId(rid)
+    setFormRoomId(String((b as any).room_id ?? "unassigned"))
+    setFormResourceId(
+      hasResourceIdField
+        ? String((b as any).resource_id ?? "unassigned")
+        : legacyResourceField
+          ? String((b as any).device_id ?? "unassigned")
+          : "unassigned"
+    )
   }
 
   function buildStartEndFromForm() {
@@ -517,10 +562,10 @@ export default function OnlineKalenderPage() {
       end_at: end.toISOString(),
     }
 
-    // Ressource nur setzen, wenn DB-Feld erkannt wurde (sonst riskierst du DB-Error)
-    if (resourceField) {
-      payload[resourceField] = formResourceId === "unassigned" ? null : formResourceId
-    }
+    // nur senden wenn Spalten existieren (sonst DB-Error)
+    if (hasRoomIdField) payload.room_id = formRoomId === "unassigned" ? null : formRoomId
+    if (hasResourceIdField) payload.resource_id = formResourceId === "unassigned" ? null : formResourceId
+    else if (legacyResourceField) payload.device_id = formResourceId === "unassigned" ? null : formResourceId
 
     try {
       setLoading(true)
@@ -535,7 +580,6 @@ export default function OnlineKalenderPage() {
       }
 
       await loadAll()
-      // Panel bleibt offen, damit du schnell weiter klicken kannst
       setSelectedBooking(null)
       setEditingId(null)
     } catch (e: any) {
@@ -637,7 +681,8 @@ export default function OnlineKalenderPage() {
     if (conflict) return setError("Verschieben nicht möglich: Termin-Konflikt beim Mitarbeiter.")
 
     const payload: any = { start_at: newStart.toISOString(), end_at: newEnd.toISOString() }
-    if (resourceField) payload[resourceField] = newResourceId === "unassigned" ? null : newResourceId
+    if (hasResourceIdField) payload.resource_id = newResourceId === "unassigned" ? null : newResourceId
+    else if (legacyResourceField) payload.device_id = newResourceId === "unassigned" ? null : newResourceId
 
     try {
       const res = await (buchungenService as any).update(bookingId, payload)
@@ -648,7 +693,6 @@ export default function OnlineKalenderPage() {
     }
   }
 
-  // ---- UI rendering ----
   function ViewModeButton({ mode, label }: { mode: ViewMode; label: string }) {
     const active = viewMode === mode
     return (
@@ -663,7 +707,6 @@ export default function OnlineKalenderPage() {
     )
   }
 
-  // Right panel content
   const panelTitle = useMemo(() => {
     if (!panelOpen) return "Details"
     if (editingId) return "Termin bearbeiten"
@@ -675,7 +718,6 @@ export default function OnlineKalenderPage() {
       <Sidebar />
 
       <main className="flex-1 p-6">
-        {/* Top bar */}
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Online Kalender</h1>
@@ -787,7 +829,6 @@ export default function OnlineKalenderPage() {
 
             <button
               onClick={() => {
-                // Quick create: heute 10:00
                 const d = viewMode === "week" ? startOfDay(new Date()) : selectedDate
                 openCreatePanelAt({ date: d, hhmm: "10:00" })
               }}
@@ -804,12 +845,9 @@ export default function OnlineKalenderPage() {
           </div>
         )}
 
-        {/* Main area: Calendar + Right panel */}
         <div className="mt-6 flex gap-4">
-          {/* Calendar */}
           <div className="flex-1 rounded-xl border bg-white overflow-hidden">
             <div className="flex items-stretch">
-              {/* Zeitachse */}
               <div className="w-20 border-r bg-gray-50">
                 <div className="h-14 border-b" />
                 <div className="relative" style={{ height: gridHeight }}>
@@ -829,9 +867,7 @@ export default function OnlineKalenderPage() {
                 </div>
               </div>
 
-              {/* Content */}
               <div className="flex-1 overflow-hidden">
-                {/* Headers */}
                 {viewMode === "week" ? (
                   <div className="grid" style={{ gridTemplateColumns: "repeat(7, minmax(200px, 1fr))" }}>
                     {weekDays.map((d, idx) => {
@@ -848,7 +884,9 @@ export default function OnlineKalenderPage() {
                               </span>
                             )}
                           </div>
-                          <div className="text-xs text-gray-500">{(bookingsByDay.get(toLocalYMD(d)) ?? []).length} Termine</div>
+                          <div className="text-xs text-gray-500">
+                            {(bookingsByDay.get(toLocalYMD(d)) ?? []).length} Termine
+                          </div>
                         </div>
                       )
                     })}
@@ -862,7 +900,7 @@ export default function OnlineKalenderPage() {
                       <div key={r.id} className="h-14 border-b border-l px-4 py-3">
                         <div className="text-sm font-semibold text-gray-900 truncate">{r.name}</div>
                         <div className="text-xs text-gray-500">
-                          {resourceField ? "Ressource" : "Hinweis: Kein resource_id/room_id/device_id erkannt"}
+                          {hasResourceIdField || legacyResourceField ? "Ressource" : "Hinweis: Kein resource_id/device_id erkannt"}
                         </div>
                       </div>
                     ))}
@@ -893,7 +931,6 @@ export default function OnlineKalenderPage() {
                   </div>
                 )}
 
-                {/* Scroll grid */}
                 <div ref={scrollRef} className="h-[70vh] overflow-auto">
                   {/* WEEK */}
                   {viewMode === "week" && (
@@ -916,7 +953,7 @@ export default function OnlineKalenderPage() {
                               return (
                                 <div
                                   key={s.label}
-                                  className={`absolute left-0 right-0 border-t ${s.mm === 0 ? "border-gray-200" : "border-gray-100"}`}
+                                  className={`absolute left-0 right-0 z-0 border-t ${s.mm === 0 ? "border-gray-200" : "border-gray-100"}`}
                                   style={{ top: slotTop, height: SLOT_HEIGHT }}
                                   onClick={() => openCreatePanelAt({ date: d, hhmm: s.label })}
                                   onDrop={(e) => {
@@ -965,14 +1002,20 @@ export default function OnlineKalenderPage() {
                                     e.dataTransfer.setData("text/bookingId", String((it.b as any).id))
                                     e.dataTransfer.effectAllowed = "move"
                                   }}
-                                  onClick={() => openEditPanel(it.b)}
-                                  className={`absolute z-10 cursor-pointer rounded-lg border px-2 py-1 text-xs text-gray-800 shadow-sm ${stUI.bg} ${stUI.border}`}
+                                  onMouseDownCapture={(e) => e.stopPropagation()}
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    openEditPanel(it.b)
+                                  }}
+                                  className={`absolute z-30 pointer-events-auto cursor-pointer rounded-lg border px-2 py-1 text-xs text-gray-800 shadow-sm ${stUI.bg} ${stUI.border}`}
                                   style={{
                                     top,
                                     height,
                                     left: `calc(${leftPct}% + 6px)`,
                                     width: `calc(${widthPct}% - 12px)`,
                                   }}
+                                  title="Klicken: bearbeiten · Ziehen: verschieben"
                                 >
                                   <div className="flex items-center justify-between gap-2">
                                     <div className="font-semibold text-gray-900 truncate">{kundeName}</div>
@@ -1013,9 +1056,7 @@ export default function OnlineKalenderPage() {
                   {viewMode === "day_resources" && (
                     <div
                       className="grid"
-                      style={{
-                        gridTemplateColumns: `repeat(${Math.max(1, resources.length)}, minmax(220px, 1fr))`,
-                      }}
+                      style={{ gridTemplateColumns: `repeat(${Math.max(1, resources.length)}, minmax(220px, 1fr))` }}
                     >
                       {resources.map((r) => {
                         const list = bookingsByResource.get(r.id) ?? []
@@ -1036,7 +1077,7 @@ export default function OnlineKalenderPage() {
                               return (
                                 <div
                                   key={s.label}
-                                  className={`absolute left-0 right-0 border-t ${s.mm === 0 ? "border-gray-200" : "border-gray-100"}`}
+                                  className={`absolute left-0 right-0 z-0 border-t ${s.mm === 0 ? "border-gray-200" : "border-gray-100"}`}
                                   style={{ top: slotTop, height: SLOT_HEIGHT }}
                                   onClick={() => {
                                     if (disabled) return
@@ -1088,14 +1129,20 @@ export default function OnlineKalenderPage() {
                                     e.dataTransfer.setData("text/bookingId", String((it.b as any).id))
                                     e.dataTransfer.effectAllowed = "move"
                                   }}
-                                  onClick={() => openEditPanel(it.b)}
-                                  className={`absolute z-10 cursor-pointer rounded-lg border px-2 py-1 text-xs text-gray-800 shadow-sm ${stUI.bg} ${stUI.border}`}
+                                  onMouseDownCapture={(e) => e.stopPropagation()}
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    openEditPanel(it.b)
+                                  }}
+                                  className={`absolute z-30 pointer-events-auto cursor-pointer rounded-lg border px-2 py-1 text-xs text-gray-800 shadow-sm ${stUI.bg} ${stUI.border}`}
                                   style={{
                                     top,
                                     height,
                                     left: `calc(${leftPct}% + 6px)`,
                                     width: `calc(${widthPct}% - 12px)`,
                                   }}
+                                  title="Klicken: bearbeiten · Ziehen: verschieben"
                                 >
                                   <div className="flex items-center justify-between gap-2">
                                     <div className="font-semibold text-gray-900 truncate">{kundeName}</div>
@@ -1118,9 +1165,7 @@ export default function OnlineKalenderPage() {
                   {viewMode === "day_employees" && (
                     <div
                       className="grid"
-                      style={{
-                        gridTemplateColumns: `repeat(${Math.max(1, filteredMitarbeiter.length)}, minmax(220px, 1fr))`,
-                      }}
+                      style={{ gridTemplateColumns: `repeat(${Math.max(1, filteredMitarbeiter.length)}, minmax(220px, 1fr))` }}
                     >
                       {filteredMitarbeiter.map((m: any, idx: number) => {
                         const empId = String(m.id)
@@ -1143,7 +1188,7 @@ export default function OnlineKalenderPage() {
                               return (
                                 <div
                                   key={s.label}
-                                  className={`absolute left-0 right-0 border-t ${s.mm === 0 ? "border-gray-200" : "border-gray-100"}`}
+                                  className={`absolute left-0 right-0 z-0 border-t ${s.mm === 0 ? "border-gray-200" : "border-gray-100"}`}
                                   style={{ top: slotTop, height: SLOT_HEIGHT }}
                                   onClick={() => {
                                     if (disabled) return
@@ -1190,14 +1235,20 @@ export default function OnlineKalenderPage() {
                                     e.dataTransfer.setData("text/bookingId", String((it.b as any).id))
                                     e.dataTransfer.effectAllowed = "move"
                                   }}
-                                  onClick={() => openEditPanel(it.b)}
-                                  className={`absolute z-10 cursor-pointer rounded-lg border px-2 py-1 text-xs text-gray-800 shadow-sm ${stUI.bg} ${stUI.border}`}
+                                  onMouseDownCapture={(e) => e.stopPropagation()}
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    openEditPanel(it.b)
+                                  }}
+                                  className={`absolute z-30 pointer-events-auto cursor-pointer rounded-lg border px-2 py-1 text-xs text-gray-800 shadow-sm ${stUI.bg} ${stUI.border}`}
                                   style={{
                                     top,
                                     height,
                                     left: `calc(${leftPct}% + 6px)`,
                                     width: `calc(${widthPct}% - 12px)`,
                                   }}
+                                  title="Klicken: bearbeiten · Ziehen: verschieben"
                                 >
                                   <div className="flex items-center justify-between gap-2">
                                     <div className="font-semibold text-gray-900 truncate">{kundeName}</div>
@@ -1379,14 +1430,38 @@ export default function OnlineKalenderPage() {
                     </select>
                   </div>
 
+                  {/* room_id */}
                   <div>
-                    <label className="text-xs text-gray-600">Ressource (Raum/Gerät)</label>
+                    <label className="text-xs text-gray-600">Raum (room_id)</label>
+                    <select
+                      value={formRoomId}
+                      onChange={(e) => setFormRoomId(e.target.value)}
+                      className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                      disabled={!hasRoomIdField}
+                      title={!hasRoomIdField ? "Spalte room_id fehlt noch in buchungen" : ""}
+                    >
+                      {rooms.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.name}
+                        </option>
+                      ))}
+                    </select>
+                    {!hasRoomIdField && (
+                      <div className="mt-1 text-xs text-gray-500">
+                        room_id ist noch nicht in deiner Tabelle. Nach dem Supabase-Update wird das Dropdown aktiv.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* resource_id */}
+                  <div>
+                    <label className="text-xs text-gray-600">Ressource / Gerät (resource_id)</label>
                     <select
                       value={formResourceId}
                       onChange={(e) => setFormResourceId(e.target.value)}
                       className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                      disabled={!resourceField}
-                      title={!resourceField ? "Kein resource_id/room_id/device_id erkannt – Feld fehlt in DB" : ""}
+                      disabled={!hasResourceIdField && !legacyResourceField}
+                      title={!hasResourceIdField && !legacyResourceField ? "Spalte resource_id/device_id fehlt noch" : ""}
                     >
                       {resources.map((r) => (
                         <option key={r.id} value={r.id}>
@@ -1394,9 +1469,9 @@ export default function OnlineKalenderPage() {
                         </option>
                       ))}
                     </select>
-                    {!resourceField && (
+                    {!hasResourceIdField && !legacyResourceField && (
                       <div className="mt-1 text-xs text-gray-500">
-                        Für echtes Speichern brauchst du ein Feld in `buchungen`: <b>resource_id</b> (oder room_id/device_id).
+                        Für echtes Speichern brauchst du in `buchungen`: <b>resource_id</b> (oder device_id).
                       </div>
                     )}
                   </div>
@@ -1428,7 +1503,6 @@ export default function OnlineKalenderPage() {
                     <button
                       className="rounded-lg border px-4 py-2 text-sm hover:bg-gray-50"
                       onClick={() => {
-                        // Reset selection but keep panel open
                         setSelectedBooking(null)
                         setEditingId(null)
                       }}
