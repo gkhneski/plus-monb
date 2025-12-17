@@ -1,426 +1,771 @@
-'use client';
-import React, { useEffect, useState } from 'react';
-import Sidebar from '../../components/common/Sidebar';
-import { buchungenService } from '../../services/buchungenService';
-import { mitarbeiterService } from '../../services/mitarbeiterService';
-import { supabase } from '../../lib/supabase/client';
+"use client"
 
-interface BuchungWithRelations {
-  id: string;
-  kunde_id: string;
-  mitarbeiter_id: string;
-  behandlung_id: string | null;
-  filiale_id: string | null;
-  start_at: string;
-  end_at: string;
-  status: 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
-  notiz: string | null;
-  kunden?: {
-    id: string;
-    vorname: string;
-    nachname: string;
-    email: string | null;
-    telefon: string | null;
-  } | null;
-  mitarbeiter?: {
-    id: string;
-    name: string;
-  } | null;
-  behandlungen?: {
-    id: string;
-    name: string;
-    dauer_min: number;
-    preis_eur: number;
-  } | null;
-  filialen?: {
-    id: string;
-    name: string;
-  } | null;
+import React, { useEffect, useMemo, useRef, useState } from "react"
+import Sidebar from "../../components/common/Sidebar"
+import { buchungenService } from "../../services/buchungenService"
+import { kundenService } from "../../services/kundenService"
+import { mitarbeiterService } from "../../services/mitarbeiterService"
+import { behandlungenService } from "../../services/behandlungenService"
+import { filialenService } from "../../services/filialenService"
+import type { Database } from "../../types/database.types"
+
+type Kunde = Database["public"]["Tables"]["kunden"]["Row"]
+type Mitarbeiter = Database["public"]["Tables"]["mitarbeiter"]["Row"]
+type Behandlung = Database["public"]["Tables"]["behandlungen"]["Row"]
+type Filiale = Database["public"]["Tables"]["filialen"]["Row"]
+type Buchung = Database["public"]["Tables"]["buchungen"]["Row"]
+
+type Status = "scheduled" | "confirmed" | "completed" | "cancelled" | "no_show"
+
+interface BuchungWithRelations extends Buchung {
+  kunden?: Kunde | null
+  mitarbeiter?: Mitarbeiter | null
+  behandlung?: Behandlung | null
+  filiale?: Filiale | null
 }
 
-interface Mitarbeiter {
-  id: string;
-  name: string;
-  color_hex: string | null;
-  created_at: string;
-  updated_at: string;
+const SLOT_MINUTES = 15
+const SLOT_HEIGHT = 24 // px pro 15 min
+const START_HOUR = 8
+const END_HOUR = 20
+
+function pad2(n: number) {
+  return String(n).padStart(2, "0")
+}
+function toLocalYMD(d: Date) {
+  const y = d.getFullYear()
+  const m = pad2(d.getMonth() + 1)
+  const day = pad2(d.getDate())
+  return `${y}-${m}-${day}`
+}
+function startOfDay(d: Date) {
+  const x = new Date(d)
+  x.setHours(0, 0, 0, 0)
+  return x
+}
+function addDays(d: Date, days: number) {
+  const x = new Date(d)
+  x.setDate(x.getDate() + days)
+  return x
+}
+function setTimeOnDate(d: Date, hh: number, mm: number) {
+  const x = new Date(d)
+  x.setHours(hh, mm, 0, 0)
+  return x
+}
+function minutesBetween(a: Date, b: Date) {
+  return Math.round((b.getTime() - a.getTime()) / 60000)
+}
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n))
+}
+function formatHHMM(d: Date) {
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 }
 
-export default function OnlineCalendarPage() {
-  const [buchungen, setBuchungen] = useState<BuchungWithRelations[]>([]);
-  const [mitarbeiter, setMitarbeiter] = useState<Mitarbeiter[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [selectedMitarbeiter, setSelectedMitarbeiter] = useState<string>('all');
-  const [selectedStatus, setSelectedStatus] = useState<string>('all');
+function safeDate(v: any) {
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? null : d
+}
 
-  // Verify Supabase client on component mount
-  useEffect(() => {
-    console.log('🔍 Online Kalender: Überprüfung der Supabase-Konfiguration');
-    console.log('📌 Supabase Client:', supabase ? '✅ Initialisiert' : '❌ Nicht initialisiert');
-    console.log('📌 NEXT_PUBLIC_SUPABASE_URL:', process.env.NEXT_PUBLIC_SUPABASE_URL ? '✅ Gesetzt' : '❌ Fehlt');
-    console.log('📌 NEXT_PUBLIC_SUPABASE_ANON_KEY:', process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? '✅ Gesetzt' : '❌ Fehlt');
-    
-    if (!supabase) {
-      setError('❌ Supabase Client ist nicht initialisiert. Bitte überprüfen Sie die Umgebungsvariablen.');
-      setLoading(false);
-      return;
+/** simple overlap layout: splits overlapping bookings into columns */
+function layoutEvents(events: BuchungWithRelations[], dayStart: Date) {
+  const sorted = [...events].sort((a, b) => {
+    const sa = safeDate((a as any).start_at)?.getTime() ?? 0
+    const sb = safeDate((b as any).start_at)?.getTime() ?? 0
+    return sa - sb
+  })
+
+  type Item = {
+    b: BuchungWithRelations
+    startMin: number
+    endMin: number
+    col: number
+    colCount: number
+  }
+
+  const items: Item[] = []
+  const active: Item[] = []
+
+  for (const b of sorted) {
+    const s = safeDate((b as any).start_at)
+    const e = safeDate((b as any).end_at)
+    if (!s || !e) continue
+
+    const startMin = minutesBetween(dayStart, s)
+    const endMin = minutesBetween(dayStart, e)
+
+    // clear inactive
+    for (let i = active.length - 1; i >= 0; i--) {
+      if (active[i].endMin <= startMin) active.splice(i, 1)
     }
-    
-    loadData();
-  }, []);
 
-  useEffect(() => {
-    if (selectedDate) {
-      console.log('📅 Datum geändert:', selectedDate);
-      loadBuchungen();
-    }
-  }, [selectedDate]);
+    // find smallest free col
+    const used = new Set(active.map((x) => x.col))
+    let col = 0
+    while (used.has(col)) col++
 
-  const loadData = async () => {
-    try {
-      console.log('🔄 Starte Datenladevorgang...');
-      setLoading(true);
-      setError('');
-      
-      console.log('👥 Lade Mitarbeiter aus Tabelle "public.mitarbeiter"...');
-      const mitarbeiterRes = await mitarbeiterService.getAll();
-      
-      console.log('📊 Mitarbeiter Antwort:', {
-        erfolg: !mitarbeiterRes.error,
-        anzahl: mitarbeiterRes.data?.length || 0,
-        fehler: mitarbeiterRes.error
-      });
-      
-      if (mitarbeiterRes.error) {
-        const errorMsg = mitarbeiterRes.error.message || String(mitarbeiterRes.error);
-        console.error('❌ Fehler beim Laden der Mitarbeiter:', errorMsg);
-        
-        // Check for RLS-specific error
-        if (errorMsg.includes('permission denied') || errorMsg.includes('42501')) {
-          setError('🔒 Keine Berechtigung (RLS): Zugriff auf Tabelle "mitarbeiter" verweigert. Bitte als Super Admin einloggen.');
-        } else if (errorMsg.includes('relation') && errorMsg.includes('does not exist')) {
-          setError(`❌ Datenbankfehler: Tabelle "mitarbeiter" existiert nicht im Schema "public". Fehler: ${errorMsg}`);
-        } else {
-          setError(`❌ Fehler beim Laden der Mitarbeiter: ${errorMsg}`);
-        }
-        setLoading(false);
-        return;
+    const item: Item = { b, startMin, endMin, col, colCount: 1 }
+    items.push(item)
+    active.push(item)
+
+    const maxCol = Math.max(...active.map((x) => x.col))
+    const count = maxCol + 1
+    for (const x of active) x.colCount = count
+  }
+
+  return items
+}
+
+export default function OnlineKalenderPage() {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const [kunden, setKunden] = useState<Kunde[]>([])
+  const [mitarbeiter, setMitarbeiter] = useState<Mitarbeiter[]>([])
+  const [behandlungen, setBehandlungen] = useState<Behandlung[]>([])
+  const [filialen, setFilialen] = useState<Filiale[]>([])
+  const [buchungen, setBuchungen] = useState<BuchungWithRelations[]>([])
+
+  const [selectedDate, setSelectedDate] = useState<Date>(() => startOfDay(new Date()))
+  const [selectedFilialeId, setSelectedFilialeId] = useState<string>("all")
+  const [selectedMitarbeiterId, setSelectedMitarbeiterId] = useState<string>("all")
+
+  // Modal: neue Buchung / edit
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+
+  const [formKundeId, setFormKundeId] = useState<string>("")
+  const [formMitarbeiterId, setFormMitarbeiterId] = useState<string>("")
+  const [formBehandlungId, setFormBehandlungId] = useState<string>("")
+  const [formFilialeId, setFormFilialeId] = useState<string>("")
+  const [formStatus, setFormStatus] = useState<Status>("confirmed")
+  const [formNotiz, setFormNotiz] = useState<string>("")
+  const [formStartHHMM, setFormStartHHMM] = useState<string>("10:00")
+  const [formDurationMin, setFormDurationMin] = useState<number>(45)
+
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+
+  const timeSlots = useMemo(() => {
+    const slots: { hh: number; mm: number; label: string }[] = []
+    for (let h = START_HOUR; h <= END_HOUR; h++) {
+      for (let m = 0; m < 60; m += SLOT_MINUTES) {
+        if (h === END_HOUR && m > 0) break
+        slots.push({ hh: h, mm: m, label: `${pad2(h)}:${pad2(m)}` })
       }
-      
-      setMitarbeiter(mitarbeiterRes.data || []);
-      console.log('✅ Mitarbeiter erfolgreich geladen:', mitarbeiterRes.data?.length || 0);
-      
-      await loadBuchungen();
-    } catch (err: any) {
-      console.error('💥 Unerwarteter Fehler in loadData:', err);
-      setError(`💥 Systemfehler: ${err?.message || 'Unbekannter Fehler'}`);
-      setLoading(false);
     }
-  };
+    return slots
+  }, [])
 
-  const loadBuchungen = async () => {
+  const dayStart = useMemo(() => setTimeOnDate(selectedDate, START_HOUR, 0), [selectedDate])
+  const dayEnd = useMemo(() => setTimeOnDate(selectedDate, END_HOUR, 0), [selectedDate])
+
+  const filteredMitarbeiter = useMemo(() => {
+    let list = [...mitarbeiter]
+    // Falls deine Mitarbeiter eine filiale_id haben, filtert das sauber.
+    if (selectedFilialeId !== "all") {
+      list = list.filter((m: any) => String((m as any).filiale_id ?? "") === selectedFilialeId)
+    }
+    if (selectedMitarbeiterId !== "all") {
+      list = list.filter((m: any) => String((m as any).id) === selectedMitarbeiterId)
+    }
+    return list
+  }, [mitarbeiter, selectedFilialeId, selectedMitarbeiterId])
+
+  const dayBookings = useMemo(() => {
+    const ymd = toLocalYMD(selectedDate)
+    let list = buchungen.filter((b) => {
+      const s = safeDate((b as any).start_at)
+      if (!s) return false
+      return toLocalYMD(s) === ymd
+    })
+    if (selectedFilialeId !== "all") {
+      list = list.filter((b: any) => String((b as any).filiale_id ?? "") === selectedFilialeId)
+    }
+    if (selectedMitarbeiterId !== "all") {
+      list = list.filter((b: any) => String((b as any).mitarbeiter_id ?? "") === selectedMitarbeiterId)
+    }
+    return list
+  }, [buchungen, selectedDate, selectedFilialeId, selectedMitarbeiterId])
+
+  const bookingsByEmployee = useMemo(() => {
+    const map = new Map<string, BuchungWithRelations[]>()
+    for (const b of dayBookings) {
+      const empId = String((b as any).mitarbeiter_id ?? "")
+      if (!map.has(empId)) map.set(empId, [])
+      map.get(empId)!.push(b)
+    }
+    return map
+  }, [dayBookings])
+
+  async function loadAll() {
+    setLoading(true)
+    setError(null)
+
     try {
-      console.log('📅 Lade Buchungen...');
-      console.log('🔍 Suche in Tabelle "public.buchungen"');
-      setLoading(true);
-      setError('');
-      
-      const startOfDay = `${selectedDate}T00:00:00`;
-      const endOfDay = `${selectedDate}T23:59:59`;
-      
-      console.log('⏰ Zeitbereich:', { von: startOfDay, bis: endOfDay });
-      
-      const { data, error: buchungenError } = await buchungenService.getByDateRange(startOfDay, endOfDay);
-      
-      console.log('📊 Buchungen Antwort:', {
-        erfolg: !buchungenError,
-        anzahl: data?.length || 0,
-        fehler: buchungenError
-      });
-      
-      if (buchungenError) {
-        const errorMsg = buchungenError.message || String(buchungenError);
-        console.error('❌ Fehler beim Laden der Buchungen:', errorMsg);
-        
-        // Check for RLS-specific error
-        if (errorMsg.includes('permission denied') || errorMsg.includes('42501')) {
-          setError('🔒 Keine Berechtigung (RLS): Zugriff auf Tabelle "buchungen" verweigert. Bitte als Super Admin einloggen.');
-        } else if (errorMsg.includes('relation') && errorMsg.includes('does not exist')) {
-          setError(`❌ Datenbankfehler: Tabelle "buchungen" existiert nicht im Schema "public". Fehler: ${errorMsg}`);
-        } else {
-          setError(`❌ Fehler beim Laden der Buchungen: ${errorMsg}`);
-        }
-        setBuchungen([]);
-      } else {
-        setBuchungen(data || []);
-        console.log('✅ Buchungen erfolgreich geladen:', data?.length || 0);
+      // Diese Services hast du bereits im Projekt – wie bei Buchungen-Seite.
+      const [kRes, mRes, bRes, fRes, buRes] = await Promise.all([
+        kundenService.getAll(),
+        mitarbeiterService.getAll(),
+        behandlungenService.getAll(),
+        filialenService.getAll(),
+        buchungenService.getAll(),
+      ])
+
+      // Annahme: { data, error } Pattern (wie Supabase)
+      const kErr = (kRes as any)?.error
+      const mErr = (mRes as any)?.error
+      const bErr = (bRes as any)?.error
+      const fErr = (fRes as any)?.error
+      const buErr = (buRes as any)?.error
+
+      if (kErr || mErr || bErr || fErr || buErr) {
+        throw new Error(
+          kErr?.message || mErr?.message || bErr?.message || fErr?.message || buErr?.message || "Fehler beim Laden"
+        )
       }
-    } catch (err: any) {
-      console.error('💥 Unerwarteter Fehler in loadBuchungen:', err);
-      setError(`💥 Systemfehler beim Laden der Buchungen: ${err?.message || 'Unbekannter Fehler'}`);
-      setBuchungen([]);
+
+      const k = ((kRes as any)?.data ?? []) as Kunde[]
+      const m = ((mRes as any)?.data ?? []) as Mitarbeiter[]
+      const be = ((bRes as any)?.data ?? []) as Behandlung[]
+      const f = ((fRes as any)?.data ?? []) as Filiale[]
+      const bu = ((buRes as any)?.data ?? []) as Buchung[]
+
+      setKunden(k)
+      setMitarbeiter(m)
+      setBehandlungen(be)
+      setFilialen(f)
+
+      // Relations mappen (schnell & stabil)
+      const kMap = new Map(k.map((x: any) => [String(x.id), x]))
+      const mMap = new Map(m.map((x: any) => [String(x.id), x]))
+      const beMap = new Map(be.map((x: any) => [String(x.id), x]))
+      const fMap = new Map(f.map((x: any) => [String(x.id), x]))
+
+      const withRel: BuchungWithRelations[] = bu.map((x: any) => ({
+        ...(x as any),
+        kunden: x.kunde_id ? (kMap.get(String(x.kunde_id)) ?? null) : null,
+        mitarbeiter: x.mitarbeiter_id ? (mMap.get(String(x.mitarbeiter_id)) ?? null) : null,
+        behandlung: x.behandlung_id ? (beMap.get(String(x.behandlung_id)) ?? null) : null,
+        filiale: x.filiale_id ? (fMap.get(String(x.filiale_id)) ?? null) : null,
+      }))
+
+      setBuchungen(withRel)
+    } catch (e: any) {
+      setError(e?.message ?? "Unbekannter Fehler")
     } finally {
-      setLoading(false);
+      setLoading(false)
+      // auto-scroll Richtung 10:00
+      setTimeout(() => {
+        if (!scrollRef.current) return
+        const targetMin = (10 - START_HOUR) * 60
+        const y = (targetMin / SLOT_MINUTES) * SLOT_HEIGHT
+        scrollRef.current.scrollTop = y
+      }, 50)
     }
-  };
+  }
 
-  const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'scheduled':
-        return 'Geplant';
-      case 'confirmed':
-        return 'Bestätigt';
-      case 'completed':
-        return 'Abgeschlossen';
-      case 'cancelled':
-        return 'Storniert';
-      case 'no_show':
-        return 'Nicht erschienen';
-      default:
-        return status;
+  useEffect(() => {
+    loadAll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function openCreateModalAt(empId: string, hhmm: string) {
+    setEditingId(null)
+    setModalOpen(true)
+    setFormMitarbeiterId(empId)
+    setFormStartHHMM(hhmm)
+    setFormDurationMin(45)
+    setFormStatus("confirmed")
+    setFormNotiz("")
+
+    // default: Filiale aus Filter oder vom Mitarbeiter (falls vorhanden)
+    if (selectedFilialeId !== "all") setFormFilialeId(selectedFilialeId)
+    else {
+      const emp = mitarbeiter.find((x: any) => String(x.id) === empId) as any
+      setFormFilialeId(String(emp?.filiale_id ?? ""))
     }
-  };
+  }
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'scheduled':
-        return 'bg-blue-100 text-blue-800 border-blue-300';
-      case 'confirmed':
-        return 'bg-green-100 text-green-800 border-green-300';
-      case 'completed':
-        return 'bg-gray-100 text-gray-800 border-gray-300';
-      case 'cancelled':
-        return 'bg-red-100 text-red-800 border-red-300';
-      case 'no_show':
-        return 'bg-orange-100 text-orange-800 border-orange-300';
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-300';
+  function openEditModal(b: BuchungWithRelations) {
+    const s = safeDate((b as any).start_at)
+    const e = safeDate((b as any).end_at)
+    if (!s || !e) return
+
+    setEditingId(String((b as any).id))
+    setModalOpen(true)
+
+    setFormKundeId(String((b as any).kunde_id ?? ""))
+    setFormMitarbeiterId(String((b as any).mitarbeiter_id ?? ""))
+    setFormBehandlungId(String((b as any).behandlung_id ?? ""))
+    setFormFilialeId(String((b as any).filiale_id ?? ""))
+    setFormStatus(((b as any).status ?? "confirmed") as Status)
+    setFormNotiz(String((b as any).notiz ?? ""))
+
+    setFormStartHHMM(formatHHMM(s))
+    setFormDurationMin(Math.max(15, minutesBetween(s, e)))
+  }
+
+  async function submitModal() {
+    const [hh, mm] = formStartHHMM.split(":").map((x) => parseInt(x, 10))
+    const start = setTimeOnDate(selectedDate, hh || 0, mm || 0)
+    const end = new Date(start.getTime() + Math.max(15, formDurationMin) * 60000)
+
+    const payload: any = {
+      kunde_id: formKundeId || null,
+      mitarbeiter_id: formMitarbeiterId || null,
+      behandlung_id: formBehandlungId || null,
+      filiale_id: formFilialeId || null,
+      status: formStatus,
+      notiz: formNotiz || null,
+      start_at: start.toISOString(),
+      end_at: end.toISOString(),
     }
-  };
 
-  const formatTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return new Intl.DateTimeFormat('de-DE', {
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(date);
-  };
+    try {
+      setLoading(true)
+      setError(null)
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return new Intl.DateTimeFormat('de-DE', {
-      weekday: 'long',
-      day: '2-digit',
-      month: 'long',
-      year: 'numeric',
-    }).format(date);
-  };
-
-  const filteredBuchungen = buchungen.filter((buchung) => {
-    const matchesMitarbeiter = selectedMitarbeiter === 'all' || buchung.mitarbeiter_id === selectedMitarbeiter;
-    const matchesStatus = selectedStatus === 'all' || buchung.status === selectedStatus;
-    return matchesMitarbeiter && matchesStatus;
-  });
-
-  const groupByMitarbeiter = () => {
-    const grouped: { [key: string]: BuchungWithRelations[] } = {};
-    
-    filteredBuchungen.forEach((buchung) => {
-      const mitarbeiterName = buchung.mitarbeiter?.name || 'Unbekannt';
-      if (!grouped[mitarbeiterName]) {
-        grouped[mitarbeiterName] = [];
+      if (editingId) {
+        const res = await (buchungenService as any).update(editingId, payload)
+        if ((res as any)?.error) throw new Error((res as any).error.message)
+      } else {
+        const res = await (buchungenService as any).create(payload)
+        if ((res as any)?.error) throw new Error((res as any).error.message)
       }
-      grouped[mitarbeiterName].push(buchung);
-    });
 
-    // Sort bookings by start_at within each group
-    Object.keys(grouped).forEach((key) => {
-      grouped[key].sort((a, b) => 
-        new Date(a.start_at).getTime() - new Date(b.start_at).getTime()
-      );
-    });
+      setModalOpen(false)
+      await loadAll()
+    } catch (e: any) {
+      setError(e?.message ?? "Speichern fehlgeschlagen")
+      setLoading(false)
+    }
+  }
 
-    return grouped;
-  };
+  async function moveBooking(bookingId: string, newEmpId: string, newStart: Date) {
+    const b = buchungen.find((x: any) => String((x as any).id) === bookingId)
+    if (!b) return
 
-  const groupedBuchungen = groupByMitarbeiter();
+    const oldStart = safeDate((b as any).start_at)
+    const oldEnd = safeDate((b as any).end_at)
+    if (!oldStart || !oldEnd) return
+
+    const dur = Math.max(15, minutesBetween(oldStart, oldEnd))
+    const newEnd = new Date(newStart.getTime() + dur * 60000)
+
+    const payload: any = {
+      mitarbeiter_id: newEmpId,
+      start_at: newStart.toISOString(),
+      end_at: newEnd.toISOString(),
+    }
+
+    try {
+      const res = await (buchungenService as any).update(bookingId, payload)
+      if ((res as any)?.error) throw new Error((res as any).error.message)
+      await loadAll()
+    } catch (e: any) {
+      setError(e?.message ?? "Verschieben fehlgeschlagen")
+    }
+  }
+
+  const gridHeight = useMemo(() => {
+    const totalMinutes = (END_HOUR - START_HOUR) * 60
+    const slots = totalMinutes / SLOT_MINUTES
+    return slots * SLOT_HEIGHT
+  }, [])
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
-      
-      <div className="flex-1 overflow-auto">
-        <div className="p-8">
-          <div className="max-w-7xl mx-auto">
-            <div className="mb-6">
-              <h1 className="text-3xl font-bold text-gray-900">Online Kalender</h1>
-              <p className="text-gray-600 mt-2">Tagesansicht der Buchungen</p>
+
+      <main className="flex-1 p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Online Kalender</h1>
+            <p className="mt-1 text-sm text-gray-500">
+              Tagesansicht · Drag & Drop · Klick auf freien Slot = neue Buchung
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setSelectedDate(startOfDay(new Date()))}
+              className="rounded-lg border bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+            >
+              Heute
+            </button>
+
+            <button
+              onClick={() => setSelectedDate((d) => startOfDay(addDays(d, -1)))}
+              className="rounded-lg border bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+            >
+              ←
+            </button>
+
+            <input
+              type="date"
+              value={toLocalYMD(selectedDate)}
+              onChange={(e) => setSelectedDate(startOfDay(new Date(e.target.value + "T00:00:00")))}
+              className="rounded-lg border bg-white px-3 py-2 text-sm text-gray-700"
+            />
+
+            <button
+              onClick={() => setSelectedDate((d) => startOfDay(addDays(d, 1)))}
+              className="rounded-lg border bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+            >
+              →
+            </button>
+
+            <select
+              value={selectedFilialeId}
+              onChange={(e) => setSelectedFilialeId(e.target.value)}
+              className="rounded-lg border bg-white px-3 py-2 text-sm text-gray-700"
+            >
+              <option value="all">Alle Filialen</option>
+              {filialen.map((f: any) => (
+                <option key={String(f.id)} value={String(f.id)}>
+                  {String((f as any).name ?? (f as any).titel ?? "Filiale")}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={selectedMitarbeiterId}
+              onChange={(e) => setSelectedMitarbeiterId(e.target.value)}
+              className="rounded-lg border bg-white px-3 py-2 text-sm text-gray-700"
+            >
+              <option value="all">Alle Mitarbeiter</option>
+              {mitarbeiter.map((m: any) => (
+                <option key={String(m.id)} value={String(m.id)}>
+                  {String((m as any).name ?? (m as any).vorname ?? "Mitarbeiter")}
+                </option>
+              ))}
+            </select>
+
+            <button
+              onClick={() => {
+                // default: 10:00 + erster Mitarbeiter
+                const first = filteredMitarbeiter[0] as any
+                if (!first) return setError("Keine Mitarbeiter vorhanden (Filter?)")
+                openCreateModalAt(String(first.id), "10:00")
+              }}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+            >
+              + Neue Buchung
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        <div className="mt-6 rounded-xl border bg-white">
+          <div className="flex items-stretch">
+            {/* Zeitachse */}
+            <div className="w-20 border-r bg-gray-50">
+              <div className="h-14 border-b" />
+              <div className="relative" style={{ height: gridHeight }}>
+                {timeSlots.map((s) => {
+                  const isHour = s.mm === 0
+                  const top = ((s.hh - START_HOUR) * 60 + s.mm) / SLOT_MINUTES * SLOT_HEIGHT
+                  return (
+                    <div
+                      key={s.label}
+                      className="absolute left-0 right-0 pr-2 text-right text-xs text-gray-500"
+                      style={{ top: top - 8 }}
+                    >
+                      {isHour ? s.label : ""}
+                    </div>
+                  )
+                })}
+              </div>
             </div>
 
-            {/* Filters */}
-            <div className="bg-white rounded-lg shadow p-6 mb-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Datum
-                  </label>
-                  <input
-                    type="date"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                  />
+            {/* Kalender-Grid */}
+            <div className="flex-1 overflow-hidden">
+              {/* Header (Mitarbeiter) */}
+              <div className="grid" style={{ gridTemplateColumns: `repeat(${Math.max(1, filteredMitarbeiter.length)}, minmax(220px, 1fr))` }}>
+                {filteredMitarbeiter.length === 0 ? (
+                  <div className="h-14 border-b px-4 py-3 text-sm text-gray-600">
+                    Keine Mitarbeiter im Filter
+                  </div>
+                ) : (
+                  filteredMitarbeiter.map((m: any) => (
+                    <div key={String(m.id)} className="h-14 border-b border-l px-4 py-3">
+                      <div className="text-sm font-semibold text-gray-900">
+                        {String(m.name ?? m.vorname ?? "Mitarbeiter")}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {String(m.position ?? "")}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div ref={scrollRef} className="h-[70vh] overflow-auto">
+                <div
+                  className="grid"
+                  style={{
+                    gridTemplateColumns: `repeat(${Math.max(1, filteredMitarbeiter.length)}, minmax(220px, 1fr))`,
+                  }}
+                >
+                  {filteredMitarbeiter.map((m: any) => {
+                    const empId = String(m.id)
+                    const empBookings = bookingsByEmployee.get(empId) ?? []
+                    const laidOut = layoutEvents(empBookings, startOfDay(selectedDate))
+
+                    return (
+                      <div
+                        key={empId}
+                        className="relative border-l"
+                        style={{ height: gridHeight }}
+                        onDragOver={(e) => e.preventDefault()}
+                      >
+                        {/* Slot-Linien + Drop-Zonen */}
+                        {timeSlots.map((s) => {
+                          const slotTop = ((s.hh - START_HOUR) * 60 + s.mm) / SLOT_MINUTES * SLOT_HEIGHT
+                          const slotStart = setTimeOnDate(selectedDate, s.hh, s.mm)
+                          const disabled = slotStart < dayStart || slotStart > dayEnd
+
+                          return (
+                            <div
+                              key={s.label}
+                              className={`absolute left-0 right-0 border-t ${s.mm === 0 ? "border-gray-200" : "border-gray-100"} `}
+                              style={{ top: slotTop, height: SLOT_HEIGHT }}
+                              onClick={() => {
+                                if (disabled) return
+                                openCreateModalAt(empId, s.label)
+                              }}
+                              onDrop={(e) => {
+                                e.preventDefault()
+                                const bookingId = e.dataTransfer.getData("text/bookingId")
+                                if (!bookingId) return
+                                moveBooking(bookingId, empId, slotStart)
+                              }}
+                            />
+                          )
+                        })}
+
+                        {/* Buchungen */}
+                        {laidOut.map((it) => {
+                          const s = safeDate((it.b as any).start_at)
+                          const e = safeDate((it.b as any).end_at)
+                          if (!s || !e) return null
+
+                          const day0 = startOfDay(selectedDate)
+                          const startMin = minutesBetween(day0, s)
+                          const endMin = minutesBetween(day0, e)
+
+                          const visibleStart = clamp(startMin, START_HOUR * 60, END_HOUR * 60)
+                          const visibleEnd = clamp(endMin, START_HOUR * 60, END_HOUR * 60)
+
+                          const top = ((visibleStart - START_HOUR * 60) / SLOT_MINUTES) * SLOT_HEIGHT
+                          const height = Math.max(SLOT_HEIGHT, ((visibleEnd - visibleStart) / SLOT_MINUTES) * SLOT_HEIGHT)
+
+                          const widthPct = 100 / it.colCount
+                          const leftPct = it.col * widthPct
+
+                          const kundeName = (it.b.kunden as any)?.name ?? (it.b.kunden as any)?.vorname ?? "Kunde"
+                          const behandlungName = (it.b.behandlung as any)?.name ?? (it.b as any)?.behandlung_id ?? ""
+
+                          return (
+                            <div
+                              key={String((it.b as any).id)}
+                              draggable
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData("text/bookingId", String((it.b as any).id))
+                                e.dataTransfer.effectAllowed = "move"
+                              }}
+                              onClick={() => openEditModal(it.b)}
+                              className="absolute z-10 cursor-pointer rounded-lg border bg-indigo-50 px-2 py-1 text-xs text-gray-800 shadow-sm hover:bg-indigo-100"
+                              style={{
+                                top,
+                                height,
+                                left: `calc(${leftPct}% + 6px)`,
+                                width: `calc(${widthPct}% - 12px)`,
+                              }}
+                              title="Klicken zum Bearbeiten, ziehen zum Verschieben"
+                            >
+                              <div className="font-semibold text-gray-900">{kundeName}</div>
+                              <div className="text-gray-600">{behandlungName}</div>
+                              <div className="mt-1 text-[11px] text-gray-500">
+                                {formatHHMM(s)} – {formatHHMM(e)}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })}
                 </div>
+              </div>
+            </div>
+          </div>
+
+          {loading && (
+            <div className="border-t p-3 text-sm text-gray-500">Lade Daten…</div>
+          )}
+        </div>
+
+        {/* Modal */}
+        {modalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-xl rounded-xl bg-white p-5 shadow-xl">
+              <div className="flex items-start justify-between gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Mitarbeiter
-                  </label>
+                  <div className="text-lg font-bold text-gray-900">
+                    {editingId ? "Buchung bearbeiten" : "Neue Buchung"}
+                  </div>
+                  <div className="text-sm text-gray-500">{toLocalYMD(selectedDate)}</div>
+                </div>
+                <button
+                  className="rounded-lg border px-3 py-2 text-sm hover:bg-gray-50"
+                  onClick={() => setModalOpen(false)}
+                >
+                  Schließen
+                </button>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <label className="text-xs text-gray-600">Kunde</label>
                   <select
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={selectedMitarbeiter}
-                    onChange={(e) => setSelectedMitarbeiter(e.target.value)}
+                    value={formKundeId}
+                    onChange={(e) => setFormKundeId(e.target.value)}
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
                   >
-                    <option value="all">Alle Mitarbeiter</option>
-                    {mitarbeiter?.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
+                    <option value="">— auswählen —</option>
+                    {kunden.map((k: any) => (
+                      <option key={String(k.id)} value={String(k.id)}>
+                        {String(k.name ?? k.vorname ?? "Kunde")}
                       </option>
                     ))}
                   </select>
                 </div>
+
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Status
-                  </label>
+                  <label className="text-xs text-gray-600">Mitarbeiter</label>
                   <select
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={selectedStatus}
-                    onChange={(e) => setSelectedStatus(e.target.value)}
+                    value={formMitarbeiterId}
+                    onChange={(e) => setFormMitarbeiterId(e.target.value)}
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
                   >
-                    <option value="all">Alle Status</option>
-                    <option value="scheduled">Geplant</option>
-                    <option value="confirmed">Bestätigt</option>
-                    <option value="completed">Abgeschlossen</option>
-                    <option value="cancelled">Storniert</option>
-                    <option value="no_show">Nicht erschienen</option>
+                    <option value="">— auswählen —</option>
+                    {mitarbeiter.map((m: any) => (
+                      <option key={String(m.id)} value={String(m.id)}>
+                        {String(m.name ?? m.vorname ?? "Mitarbeiter")}
+                      </option>
+                    ))}
                   </select>
                 </div>
+
+                <div>
+                  <label className="text-xs text-gray-600">Behandlung</label>
+                  <select
+                    value={formBehandlungId}
+                    onChange={(e) => setFormBehandlungId(e.target.value)}
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                  >
+                    <option value="">— auswählen —</option>
+                    {behandlungen.map((b: any) => (
+                      <option key={String(b.id)} value={String(b.id)}>
+                        {String(b.name ?? "Behandlung")}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs text-gray-600">Filiale</label>
+                  <select
+                    value={formFilialeId}
+                    onChange={(e) => setFormFilialeId(e.target.value)}
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                  >
+                    <option value="">— auswählen —</option>
+                    {filialen.map((f: any) => (
+                      <option key={String(f.id)} value={String(f.id)}>
+                        {String((f as any).name ?? (f as any).titel ?? "Filiale")}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs text-gray-600">Start</label>
+                  <input
+                    type="time"
+                    value={formStartHHMM}
+                    step={SLOT_MINUTES * 60}
+                    onChange={(e) => setFormStartHHMM(e.target.value)}
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs text-gray-600">Dauer (Min.)</label>
+                  <input
+                    type="number"
+                    min={15}
+                    step={15}
+                    value={formDurationMin}
+                    onChange={(e) => setFormDurationMin(parseInt(e.target.value || "45", 10))}
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs text-gray-600">Status</label>
+                  <select
+                    value={formStatus}
+                    onChange={(e) => setFormStatus(e.target.value as Status)}
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                  >
+                    <option value="scheduled">Geplant</option>
+                    <option value="confirmed">Bestätigt</option>
+                    <option value="completed">Erledigt</option>
+                    <option value="cancelled">Storniert</option>
+                    <option value="no_show">No-Show</option>
+                  </select>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="text-xs text-gray-600">Notiz</label>
+                  <textarea
+                    value={formNotiz}
+                    onChange={(e) => setFormNotiz(e.target.value)}
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                    rows={3}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  className="rounded-lg border px-4 py-2 text-sm hover:bg-gray-50"
+                  onClick={() => setModalOpen(false)}
+                >
+                  Abbrechen
+                </button>
+                <button
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                  onClick={submitModal}
+                >
+                  Speichern
+                </button>
+              </div>
+
+              <div className="mt-3 text-xs text-gray-500">
+                Tipp: Termin im Kalender ziehen = verschieben. Klick = bearbeiten.
               </div>
             </div>
-
-            {/* Enhanced Error Display */}
-            {error && (
-              <div className="mb-4 bg-red-50 border-2 border-red-300 text-red-800 px-6 py-4 rounded-lg shadow-md">
-                <div className="flex items-start">
-                  <div className="flex-shrink-0">
-                    <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                  </div>
-                  <div className="ml-3 flex-1">
-                    <h3 className="text-lg font-semibold text-red-900 mb-2">Fehler beim Laden der Daten</h3>
-                    <p className="text-sm whitespace-pre-wrap font-mono">{error}</p>
-                    <div className="mt-4 text-sm">
-                      <p className="font-semibold">Mögliche Lösungen:</p>
-                      <ul className="list-disc list-inside mt-2 space-y-1">
-                        <li>Stellen Sie sicher, dass Sie als Super Admin eingeloggt sind</li>
-                        <li>Überprüfen Sie die RLS-Policies in Ihrem Supabase Dashboard</li>
-                        <li>Verifizieren Sie die Umgebungsvariablen (NEXT_PUBLIC_SUPABASE_URL und NEXT_PUBLIC_SUPABASE_ANON_KEY)</li>
-                        <li>Prüfen Sie, ob die Tabellen "buchungen" und "mitarbeiter" im Schema "public" existieren</li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {loading ? (
-              <div className="text-center py-12">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
-                <p className="mt-4 text-gray-600">Wird geladen...</p>
-              </div>
-            ) : (
-              <div>
-                <div className="bg-white rounded-lg shadow p-6 mb-4">
-                  <h2 className="text-xl font-semibold text-gray-900 mb-2">
-                    {formatDate(selectedDate)}
-                  </h2>
-                  <p className="text-gray-600">
-                    {filteredBuchungen.length} Buchung{filteredBuchungen.length !== 1 ? 'en' : ''}
-                  </p>
-                </div>
-
-                {Object.keys(groupedBuchungen).length === 0 ? (
-                  <div className="text-center py-12 bg-white rounded-lg shadow">
-                    <p className="text-gray-500 text-lg">Keine Buchungen für diesen Tag</p>
-                    <p className="text-gray-400 mt-2">Passen Sie die Filter an oder wählen Sie ein anderes Datum</p>
-                  </div>
-                ) : (
-                  <div className="space-y-6">
-                    {Object.entries(groupedBuchungen).map(([mitarbeiterName, buchungen]) => (
-                      <div key={mitarbeiterName} className="bg-white rounded-lg shadow">
-                        <div className="bg-indigo-50 px-6 py-3 border-b border-indigo-100">
-                          <h3 className="text-lg font-semibold text-indigo-900">
-                            {mitarbeiterName}
-                          </h3>
-                        </div>
-                        <div className="p-6 space-y-3">
-                          {buchungen?.map((buchung) => (
-                            <div
-                              key={buchung.id}
-                              className={`border-l-4 p-4 rounded-r-lg ${getStatusColor(buchung.status)}`}
-                            >
-                              <div className="flex justify-between items-start">
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-3 mb-2">
-                                    <span className="font-semibold text-lg">
-                                      {formatTime(buchung.start_at)} - {formatTime(buchung.end_at)}
-                                    </span>
-                                    <span className="px-2 py-1 text-xs rounded-full bg-white bg-opacity-50">
-                                      {getStatusLabel(buchung.status)}
-                                    </span>
-                                  </div>
-                                  <div className="space-y-1">
-                                    <p className="font-medium text-gray-900">
-                                      {buchung.kunden?.vorname} {buchung.kunden?.nachname}
-                                    </p>
-                                    {buchung.behandlungen && (
-                                      <p className="text-sm text-gray-600">
-                                        {buchung.behandlungen.name} ({buchung.behandlungen.dauer_min} Min.)
-                                      </p>
-                                    )}
-                                    {buchung.filialen && (
-                                      <p className="text-sm text-gray-600">
-                                        Filiale: {buchung.filialen.name}
-                                      </p>
-                                    )}
-                                    {buchung.kunden?.telefon && (
-                                      <p className="text-sm text-gray-600">
-                                        Tel: {buchung.kunden.telefon}
-                                      </p>
-                                    )}
-                                    {buchung.notiz && (
-                                      <p className="text-sm text-gray-600 mt-2 italic">
-                                        Notiz: {buchung.notiz}
-                                      </p>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
-        </div>
-      </div>
+        )}
+      </main>
     </div>
-  );
+  )
 }
