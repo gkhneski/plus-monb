@@ -1,210 +1,144 @@
-"use client"
-import type React from "react"
-import { useEffect, useState } from "react"
-import Sidebar from "../../components/common/Sidebar"
-import { buchungenService } from "../../services/buchungenService"
-import { kundenService } from "../../services/kundenService"
-import { mitarbeiterService } from "../../services/mitarbeiterService"
-import { behandlungenService } from "../../services/behandlungenService"
-import { filialenService } from "../../services/filialenService"
-import type { Database } from "../../types/database.types"
+"use client";
 
-type Kunde = Database["public"]["Tables"]["kunden"]["Row"]
-type Mitarbeiter = Database["public"]["Tables"]["mitarbeiter"]["Row"]
-type Behandlung = Database["public"]["Tables"]["behandlungen"]["Row"]
-type Filiale = Database["public"]["Tables"]["filialen"]["Row"]
+import type React from "react";
+import { useEffect, useState } from "react";
+import Sidebar from "../../components/common/Sidebar";
+import { buchungenService } from "../../services/buchungenService";
+import { kundenService } from "../../services/kundenService";
+import { mitarbeiterService } from "../../services/mitarbeiterService";
+import { behandlungenService } from "../../services/behandlungenService";
+import { filialenService } from "../../services/filialenService";
+import type { Database } from "../../types/database.types";
+
+type Kunde = Database["public"]["Tables"]["kunden"]["Row"];
+type Mitarbeiter = Database["public"]["Tables"]["mitarbeiter"]["Row"];
+type Behandlung = Database["public"]["Tables"]["behandlungen"]["Row"];
+type Filiale = Database["public"]["Tables"]["filialen"]["Row"];
+
+type BookingStatus = "scheduled" | "confirmed" | "completed" | "cancelled" | "no_show";
 
 interface BuchungWithRelations {
-  id: string
-  kunde_id: string
-  mitarbeiter_id: string
-  behandlung_id: string | null
-  filiale_id: string | null
-  start_at: string
-  end_at: string
-  status: "scheduled" | "confirmed" | "completed" | "cancelled" | "no_show"
-  notiz: string | null
+  id: string;
+  kunde_id: string;
+  mitarbeiter_id: string;
+  behandlung_id: string | null;
+  filiale_id: string | null;
+  start_at: string;
+  end_at: string;
+  status: BookingStatus;
+  notiz: string | null;
   kunden?: {
-    id: string
-    vorname: string
-    nachname: string
-    email: string | null
-    telefon: string | null
-  } | null
-  mitarbeiter?: {
-    id: string
-    name: string
-  } | null
-  behandlungen?: {
-    id: string
-    name: string
-    dauer_min: number
-    preis_eur: number
-  } | null
-  filialen?: {
-    id: string
-    name: string
-  } | null
+    id: string;
+    vorname: string;
+    nachname: string;
+    email: string | null;
+    telefon: string | null;
+  } | null;
+  mitarbeiter?: { id: string; name: string } | null;
+  behandlungen?: { id: string; name: string; dauer_min: number; preis_eur: number } | null;
+  filialen?: { id: string; name: string } | null;
 }
 
+type FormState = {
+  kunde_id: string;
+  mitarbeiter_id: string;
+  behandlung_id: string; // "" => null
+  filiale_id: string; // "" => null
+  start_at: string; // datetime-local string
+  duration_min: string; // number string
+  status: BookingStatus;
+  notiz: string;
+};
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+// ISO -> datetime-local (lokale Zeit, damit Edit korrekt ist)
+const toDatetimeLocal = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(
+    d.getMinutes()
+  )}`;
+};
+
+const extractErrorMessage = (err: any) => {
+  return (
+    err?.message ||
+    err?.error?.message ||
+    err?.details ||
+    err?.hint ||
+    (typeof err === "string" ? err : null) ||
+    JSON.stringify(err)
+  );
+};
+
 export default function BuchungenPage() {
-  const [buchungen, setBuchungen] = useState<BuchungWithRelations[]>([])
-  const [kunden, setKunden] = useState<Kunde[]>([])
-  const [mitarbeiter, setMitarbeiter] = useState<Mitarbeiter[]>([])
-  const [behandlungen, setBehandlungen] = useState<Behandlung[]>([])
-  const [filialen, setFilialen] = useState<Filiale[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
-  const [isFormOpen, setIsFormOpen] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [formData, setFormData] = useState({
+  const [buchungen, setBuchungen] = useState<BuchungWithRelations[]>([]);
+  const [kunden, setKunden] = useState<Kunde[]>([]);
+  const [mitarbeiter, setMitarbeiter] = useState<Mitarbeiter[]>([]);
+  const [behandlungen, setBehandlungen] = useState<Behandlung[]>([]);
+  const [filialen, setFilialen] = useState<Filiale[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const [formData, setFormData] = useState<FormState>({
     kunde_id: "",
     mitarbeiter_id: "",
     behandlung_id: "",
     filiale_id: "",
     start_at: "",
     duration_min: "",
-    status: "scheduled" as "scheduled" | "confirmed" | "completed" | "cancelled" | "no_show",
+    status: "scheduled",
     notiz: "",
-  })
-  const [submitting, setSubmitting] = useState(false)
+  });
 
   useEffect(() => {
-    loadData()
-  }, [])
+    loadData();
+  }, []);
 
   const loadData = async () => {
-  setLoading(true);
-  setError('');
+    setLoading(true);
+    setError("");
 
-  const errors: string[] = [];
+    const errors: string[] = [];
 
-  const safe = async <T,>(
-    label: string,
-    fn: () => Promise<{ data: T[] | null; error: any }>,
-    setter: (v: T[]) => void
-  ) => {
-    try {
-      const { data, error } = await fn();
-      if (error) throw error;
-      setter(data || []);
-    } catch (e: any) {
-      errors.push(`${label}: ${e?.message ?? String(e)}`);
-    }
-  };
-
-  // ✅ ruft getActive nur wenn vorhanden – sonst getAll
-  const callList = (svc: any) => {
-    const fn =
-      (typeof svc?.getActive === 'function' && svc.getActive) ||
-      (typeof svc?.getAll === 'function' && svc.getAll);
-
-    if (!fn) {
-      return Promise.reject(new Error('Service hat weder getActive() noch getAll()'));
-    }
-    return fn();
-  };
-
-  await Promise.all([
-    safe('Buchungen', () => buchungenService.getAll(), setBuchungen),
-    safe('Kunden', () => kundenService.getAll(), setKunden),
-    safe('Mitarbeiter', () => callList(mitarbeiterService), setMitarbeiter),
-    safe('Behandlungen', () => callList(behandlungenService), setBehandlungen),
-    safe('Filialen', () => callList(filialenService), setFilialen),
-  ]);
-
-  if (errors.length) {
-    console.error('loadData errors:', errors);
-    setError(errors.join(' | '));
-  }
-
-  setLoading(false);
-};
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSubmitting(true)
-    setError("")
-
-    try {
-      // Calculate end_at from start_at + duration
-      const startDate = new Date(formData.start_at)
-      const durationMin = Number.parseInt(formData.duration_min)
-      const endDate = new Date(startDate.getTime() + durationMin * 60000)
-
-      const submitData = {
-        kunde_id: formData.kunde_id,
-        mitarbeiter_id: formData.mitarbeiter_id,
-        behandlung_id: formData.behandlung_id || null,
-        filiale_id: formData.filiale_id || null,
-        start_at: formData.start_at,
-        end_at: endDate.toISOString(),
-        status: formData.status,
-        notiz: formData.notiz || null,
+    const safe = async <T,>(
+      label: string,
+      fn: () => Promise<{ data: T[] | null; error: any }>,
+      setter: (v: T[]) => void
+    ) => {
+      try {
+        const { data, error } = await fn();
+        if (error) throw error;
+        setter(data || []);
+      } catch (e: any) {
+        errors.push(`${label}: ${extractErrorMessage(e)}`);
       }
+    };
 
-      if (editingId) {
-        const { error } = await buchungenService.update(editingId, submitData)
-        if (error) throw error
-      } else {
-        const { error } = await buchungenService.create(submitData)
-        if (error) throw error
-      }
+    const callList = (svc: any) => {
+      const fn = (typeof svc?.getActive === "function" && svc.getActive) || (typeof svc?.getAll === "function" && svc.getAll);
+      if (!fn) return Promise.reject(new Error("Service hat weder getActive() noch getAll()"));
+      return fn();
+    };
 
-      await loadData()
-      setIsFormOpen(false)
-      resetForm()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Fehler beim Speichern")
-    } finally {
-      setSubmitting(false)
+    await Promise.all([
+      safe("Buchungen", () => buchungenService.getAll(), setBuchungen),
+      safe("Kunden", () => kundenService.getAll(), setKunden),
+      safe("Mitarbeiter", () => callList(mitarbeiterService), setMitarbeiter),
+      safe("Behandlungen", () => callList(behandlungenService), setBehandlungen),
+      safe("Filialen", () => callList(filialenService), setFilialen),
+    ]);
+
+    if (errors.length) {
+      console.error("loadData errors:", errors);
+      setError(errors.join(" | "));
     }
-  }
 
-  const handleEdit = (buchung: BuchungWithRelations) => {
-    // Calculate duration from start_at and end_at
-    const start = new Date(buchung.start_at)
-    const end = new Date(buchung.end_at)
-    const durationMin = Math.round((end.getTime() - start.getTime()) / 60000)
-
-    setEditingId(buchung.id)
-    setFormData({
-      kunde_id: buchung.kunde_id,
-      mitarbeiter_id: buchung.mitarbeiter_id,
-      behandlung_id: buchung.behandlung_id || "",
-      filiale_id: buchung.filiale_id || "",
-      start_at: buchung.start_at.slice(0, 16), // Format for datetime-local input
-      duration_min: durationMin.toString(),
-      status: buchung.status,
-      notiz: buchung.notiz || "",
-    })
-    setIsFormOpen(true)
-  }
-
-  const handleUpdateStatus = async (
-    id: string,
-    status: "scheduled" | "confirmed" | "completed" | "cancelled" | "no_show",
-  ) => {
-    try {
-      const { error } = await buchungenService.updateStatus(id, status)
-      if (error) throw error
-      await loadData()
-    } catch (err) {
-      setError("Fehler beim Aktualisieren des Status")
-    }
-  }
-
-  const handleDelete = async (id: string) => {
-    if (!confirm("Möchten Sie diese Buchung wirklich löschen?")) return
-
-    try {
-      const { error } = await buchungenService.delete(id)
-      if (error) throw error
-      await loadData()
-    } catch (err) {
-      setError("Fehler beim Löschen der Buchung")
-    }
-  }
+    setLoading(false);
+  };
 
   const resetForm = () => {
     setFormData({
@@ -216,63 +150,135 @@ export default function BuchungenPage() {
       duration_min: "",
       status: "scheduled",
       notiz: "",
-    })
-    setEditingId(null)
-  }
+    });
+    setEditingId(null);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError("");
+
+    try {
+      // ✅ start_at kommt als "YYYY-MM-DDTHH:mm" (lokal)
+      const startDateLocal = new Date(formData.start_at);
+      const durationMin = Number.parseInt(formData.duration_min, 10);
+
+      if (!formData.kunde_id) throw new Error("Bitte Kunde auswählen");
+      if (!formData.mitarbeiter_id) throw new Error("Bitte Mitarbeiter auswählen");
+      if (Number.isNaN(startDateLocal.getTime())) throw new Error("Startzeit ungültig");
+      if (!Number.isFinite(durationMin) || durationMin <= 0) throw new Error("Dauer muss > 0 Minuten sein");
+
+      const endDateLocal = new Date(startDateLocal.getTime() + durationMin * 60000);
+
+      // ✅ WICHTIG: beide Zeiten als ISO (UTC) speichern => keine buchungen_time_check Probleme mehr
+      const submitData = {
+        kunde_id: formData.kunde_id,
+        mitarbeiter_id: formData.mitarbeiter_id,
+        behandlung_id: formData.behandlung_id || null,
+        filiale_id: formData.filiale_id || null,
+        start_at: startDateLocal.toISOString(),
+        end_at: endDateLocal.toISOString(),
+        status: formData.status,
+        notiz: formData.notiz || null,
+      };
+
+      if (editingId) {
+        const { error } = await buchungenService.update(editingId, submitData as any);
+        if (error) throw error;
+      } else {
+        const { error } = await buchungenService.create(submitData as any);
+        if (error) throw error;
+      }
+
+      await loadData();
+      setIsFormOpen(false);
+      resetForm();
+    } catch (err: any) {
+      setError(extractErrorMessage(err) || "Fehler beim Speichern");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleEdit = (buchung: BuchungWithRelations) => {
+    const start = new Date(buchung.start_at);
+    const end = new Date(buchung.end_at);
+    const durationMin = Math.round((end.getTime() - start.getTime()) / 60000);
+
+    setEditingId(buchung.id);
+    setFormData({
+      kunde_id: buchung.kunde_id,
+      mitarbeiter_id: buchung.mitarbeiter_id,
+      behandlung_id: buchung.behandlung_id || "",
+      filiale_id: buchung.filiale_id || "",
+      // ✅ korrekt lokal ins datetime-local Format
+      start_at: toDatetimeLocal(buchung.start_at),
+      duration_min: String(durationMin > 0 ? durationMin : ""),
+      status: buchung.status,
+      notiz: buchung.notiz || "",
+    });
+    setIsFormOpen(true);
+  };
+
+  const handleUpdateStatus = async (id: string, status: BookingStatus) => {
+    try {
+      const { error } = await buchungenService.updateStatus(id, status);
+      if (error) throw error;
+      await loadData();
+    } catch {
+      setError("Fehler beim Aktualisieren des Status");
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Möchten Sie diese Buchung wirklich löschen?")) return;
+
+    try {
+      const { error } = await buchungenService.delete(id);
+      if (error) throw error;
+      await loadData();
+    } catch {
+      setError("Fehler beim Löschen der Buchung");
+    }
+  };
 
   const handleBehandlungChange = (behandlungId: string) => {
-    const behandlung = behandlungen.find((b) => b.id === behandlungId)
-    setFormData({
-      ...formData,
+    const behandlung = behandlungen.find((b) => b.id === behandlungId);
+    setFormData((prev) => ({
+      ...prev,
       behandlung_id: behandlungId,
-      duration_min: behandlung ? behandlung.dauer_min.toString() : "",
-    })
-  }
+      duration_min: behandlung ? String((behandlung as any).dauer_min ?? "") : prev.duration_min,
+    }));
+  };
 
-  const getStatusLabel = (status: string) => {
+  const getStatusColor = (status: BookingStatus) => {
     switch (status) {
       case "scheduled":
-        return "Geplant"
+        return "bg-blue-100 text-blue-800";
       case "confirmed":
-        return "Bestätigt"
+        return "bg-green-100 text-green-800";
       case "completed":
-        return "Abgeschlossen"
+        return "bg-gray-100 text-gray-800";
       case "cancelled":
-        return "Storniert"
+        return "bg-red-100 text-red-800";
       case "no_show":
-        return "Nicht erschienen"
+        return "bg-orange-100 text-orange-800";
       default:
-        return status
+        return "bg-gray-100 text-gray-800";
     }
-  }
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "scheduled":
-        return "bg-blue-100 text-blue-800"
-      case "confirmed":
-        return "bg-green-100 text-green-800"
-      case "completed":
-        return "bg-gray-100 text-gray-800"
-      case "cancelled":
-        return "bg-red-100 text-red-800"
-      case "no_show":
-        return "bg-orange-100 text-orange-800"
-      default:
-        return "bg-gray-100 text-gray-800"
-    }
-  }
+  };
 
   const formatDateTime = (dateString: string) => {
-    const date = new Date(dateString)
+    const date = new Date(dateString);
     return new Intl.DateTimeFormat("de-DE", {
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    }).format(date)
-  }
+    }).format(date);
+  };
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -285,8 +291,8 @@ export default function BuchungenPage() {
               <h1 className="text-3xl font-bold text-gray-900">Buchungen</h1>
               <button
                 onClick={() => {
-                  resetForm()
-                  setIsFormOpen(true)
+                  resetForm();
+                  setIsFormOpen(true);
                 }}
                 className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition-colors"
               >
@@ -334,7 +340,7 @@ export default function BuchungenPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {buchungen?.map((buchung) => (
+                    {buchungen.map((buchung) => (
                       <tr key={buchung.id} className="hover:bg-gray-50">
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {formatDateTime(buchung.start_at)}
@@ -342,24 +348,13 @@ export default function BuchungenPage() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {buchung.kunden?.vorname} {buchung.kunden?.nachname}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {buchung.mitarbeiter?.name}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {buchung.behandlungen?.name || "-"}
-                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{buchung.mitarbeiter?.name}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{buchung.behandlungen?.name || "-"}</td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <select
                             value={buchung.status}
-                            onChange={(e) =>
-                              handleUpdateStatus(
-                                buchung.id,
-                                e.target.value as "scheduled" | "confirmed" | "completed" | "cancelled" | "no_show",
-                              )
-                            }
-                            className={`px-2 py-1 text-xs leading-5 font-semibold rounded-full ${getStatusColor(
-                              buchung.status,
-                            )}`}
+                            onChange={(e) => handleUpdateStatus(buchung.id, e.target.value as BookingStatus)}
+                            className={`px-2 py-1 text-xs leading-5 font-semibold rounded-full ${getStatusColor(buchung.status)}`}
                           >
                             <option value="scheduled">Geplant</option>
                             <option value="confirmed">Bestätigt</option>
@@ -369,10 +364,7 @@ export default function BuchungenPage() {
                           </select>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                          <button
-                            onClick={() => handleEdit(buchung)}
-                            className="text-indigo-600 hover:text-indigo-900 mr-4"
-                          >
+                          <button onClick={() => handleEdit(buchung)} className="text-indigo-600 hover:text-indigo-900 mr-4">
                             Bearbeiten
                           </button>
                           <button onClick={() => handleDelete(buchung.id)} className="text-red-600 hover:text-red-900">
@@ -386,7 +378,6 @@ export default function BuchungenPage() {
               </div>
             )}
 
-            {/* Form Modal */}
             {isFormOpen && (
               <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
                 <div className="relative top-20 mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-md bg-white">
@@ -394,6 +385,7 @@ export default function BuchungenPage() {
                     <h3 className="text-lg font-medium leading-6 text-gray-900 mb-4">
                       {editingId ? "Buchung bearbeiten" : "Neue Buchung"}
                     </h3>
+
                     <form onSubmit={handleSubmit} className="space-y-4">
                       <div className="grid grid-cols-2 gap-4">
                         <div>
@@ -402,26 +394,27 @@ export default function BuchungenPage() {
                             required
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             value={formData.kunde_id}
-                            onChange={(e) => setFormData({ ...formData, kunde_id: e.target.value })}
+                            onChange={(e) => setFormData((p) => ({ ...p, kunde_id: e.target.value }))}
                           >
                             <option value="">Kunde auswählen</option>
-                            {kunden?.map((kunde) => (
+                            {kunden.map((kunde) => (
                               <option key={kunde.id} value={kunde.id}>
                                 {kunde.vorname} {kunde.nachname}
                               </option>
                             ))}
                           </select>
                         </div>
+
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">Mitarbeiter *</label>
                           <select
                             required
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             value={formData.mitarbeiter_id}
-                            onChange={(e) => setFormData({ ...formData, mitarbeiter_id: e.target.value })}
+                            onChange={(e) => setFormData((p) => ({ ...p, mitarbeiter_id: e.target.value }))}
                           >
                             <option value="">Mitarbeiter auswählen</option>
-                            {mitarbeiter?.map((m) => (
+                            {mitarbeiter.map((m) => (
                               <option key={m.id} value={m.id}>
                                 {m.name}
                               </option>
@@ -439,22 +432,23 @@ export default function BuchungenPage() {
                             onChange={(e) => handleBehandlungChange(e.target.value)}
                           >
                             <option value="">Keine Behandlung</option>
-                            {behandlungen?.map((b) => (
+                            {behandlungen.map((b: any) => (
                               <option key={b.id} value={b.id}>
                                 {b.name} ({b.dauer_min} Min., {b.preis_eur}€)
                               </option>
                             ))}
                           </select>
                         </div>
+
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">Filiale</label>
                           <select
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             value={formData.filiale_id}
-                            onChange={(e) => setFormData({ ...formData, filiale_id: e.target.value })}
+                            onChange={(e) => setFormData((p) => ({ ...p, filiale_id: e.target.value }))}
                           >
                             <option value="">Keine Filiale</option>
-                            {filialen?.map((f) => (
+                            {filialen.map((f) => (
                               <option key={f.id} value={f.id}>
                                 {f.name}
                               </option>
@@ -471,9 +465,10 @@ export default function BuchungenPage() {
                             required
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             value={formData.start_at}
-                            onChange={(e) => setFormData({ ...formData, start_at: e.target.value })}
+                            onChange={(e) => setFormData((p) => ({ ...p, start_at: e.target.value }))}
                           />
                         </div>
+
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">Dauer (Minuten) *</label>
                           <input
@@ -481,7 +476,7 @@ export default function BuchungenPage() {
                             required
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             value={formData.duration_min}
-                            onChange={(e) => setFormData({ ...formData, duration_min: e.target.value })}
+                            onChange={(e) => setFormData((p) => ({ ...p, duration_min: e.target.value }))}
                             placeholder="z.B. 30, 60, 90"
                           />
                         </div>
@@ -492,17 +487,7 @@ export default function BuchungenPage() {
                         <select
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                           value={formData.status}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              status: e.target.value as
-                                | "scheduled"
-                                | "confirmed"
-                                | "completed"
-                                | "cancelled"
-                                | "no_show",
-                            })
-                          }
+                          onChange={(e) => setFormData((p) => ({ ...p, status: e.target.value as BookingStatus }))}
                         >
                           <option value="scheduled">Geplant</option>
                           <option value="confirmed">Bestätigt</option>
@@ -518,7 +503,7 @@ export default function BuchungenPage() {
                           rows={3}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                           value={formData.notiz}
-                          onChange={(e) => setFormData({ ...formData, notiz: e.target.value })}
+                          onChange={(e) => setFormData((p) => ({ ...p, notiz: e.target.value }))}
                         />
                       </div>
 
@@ -526,8 +511,8 @@ export default function BuchungenPage() {
                         <button
                           type="button"
                           onClick={() => {
-                            setIsFormOpen(false)
-                            resetForm()
+                            setIsFormOpen(false);
+                            resetForm();
                           }}
                           className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300"
                           disabled={submitting}
@@ -551,5 +536,5 @@ export default function BuchungenPage() {
         </div>
       </div>
     </div>
-  )
+  );
 }
