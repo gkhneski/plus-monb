@@ -79,25 +79,38 @@ export default function BuchungenPage() {
 
   const errors: string[] = [];
 
-  // macht aus sync-throw automatisch eine rejected Promise
-  const safe = <T,>(label: string, fn: () => Promise<{ data: T[] | null; error: any }>, setter: (v: T[]) => void) =>
-    Promise.resolve()
-      .then(fn)
-      .then(({ data, error }) => {
-        if (error) throw error;
-        setter(data || []);
-      })
-      .catch((e) => {
-        const msg = e?.message ?? String(e);
-        errors.push(`${label}: ${msg}`);
-      });
+  const safe = async <T,>(
+    label: string,
+    fn: () => Promise<{ data: T[] | null; error: any }>,
+    setter: (v: T[]) => void
+  ) => {
+    try {
+      const { data, error } = await fn();
+      if (error) throw error;
+      setter(data || []);
+    } catch (e: any) {
+      errors.push(`${label}: ${e?.message ?? String(e)}`);
+    }
+  };
+
+  // ✅ ruft getActive nur wenn vorhanden – sonst getAll
+  const callList = (svc: any) => {
+    const fn =
+      (typeof svc?.getActive === 'function' && svc.getActive) ||
+      (typeof svc?.getAll === 'function' && svc.getAll);
+
+    if (!fn) {
+      return Promise.reject(new Error('Service hat weder getActive() noch getAll()'));
+    }
+    return fn();
+  };
 
   await Promise.all([
     safe('Buchungen', () => buchungenService.getAll(), setBuchungen),
     safe('Kunden', () => kundenService.getAll(), setKunden),
-    safe('Mitarbeiter', () => mitarbeiterService.getActive(), setMitarbeiter),
-    safe('Behandlungen', () => behandlungenService.getActive(), setBehandlungen),
-    safe('Filialen', () => filialenService.getActive(), setFilialen),
+    safe('Mitarbeiter', () => callList(mitarbeiterService), setMitarbeiter),
+    safe('Behandlungen', () => callList(behandlungenService), setBehandlungen),
+    safe('Filialen', () => callList(filialenService), setFilialen),
   ]);
 
   if (errors.length) {
