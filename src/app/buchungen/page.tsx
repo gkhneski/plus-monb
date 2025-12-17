@@ -74,52 +74,39 @@ export default function BuchungenPage() {
   }, [])
 
   const loadData = async () => {
-    setLoading(true)
-    setError("")
+  setLoading(true);
+  setError('');
 
-    const results = await Promise.allSettled([
-      buchungenService.getAll(),
-      kundenService.getAll(),
-      mitarbeiterService.getActive(),
-      behandlungenService.getActive(),
-      filialenService.getActive(),
-    ])
+  const errors: string[] = [];
 
-    const errors: string[] = []
+  // macht aus sync-throw automatisch eine rejected Promise
+  const safe = <T,>(label: string, fn: () => Promise<{ data: T[] | null; error: any }>, setter: (v: T[]) => void) =>
+    Promise.resolve()
+      .then(fn)
+      .then(({ data, error }) => {
+        if (error) throw error;
+        setter(data || []);
+      })
+      .catch((e) => {
+        const msg = e?.message ?? String(e);
+        errors.push(`${label}: ${msg}`);
+      });
 
-    const handle = <T,>(
-      res: PromiseSettledResult<{ data: T[] | null; error: any }>,
-      label: string,
-      setter: (v: T[]) => void,
-    ) => {
-      if (res.status === "rejected") {
-        errors.push(`${label}: ${String(res.reason)}`)
-        return
-      }
+  await Promise.all([
+    safe('Buchungen', () => buchungenService.getAll(), setBuchungen),
+    safe('Kunden', () => kundenService.getAll(), setKunden),
+    safe('Mitarbeiter', () => mitarbeiterService.getActive(), setMitarbeiter),
+    safe('Behandlungen', () => behandlungenService.getActive(), setBehandlungen),
+    safe('Filialen', () => filialenService.getActive(), setFilialen),
+  ]);
 
-      const { data, error } = res.value
-
-      if (error) {
-        errors.push(`${label}: ${error.message ?? JSON.stringify(error)}`)
-        return
-      }
-
-      setter(data || [])
-    }
-
-    handle(results[0] as any, "Buchungen", setBuchungen)
-    handle(results[1] as any, "Kunden", setKunden)
-    handle(results[2] as any, "Mitarbeiter", setMitarbeiter)
-    handle(results[3] as any, "Behandlungen", setBehandlungen)
-    handle(results[4] as any, "Filialen", setFilialen)
-
-    if (errors.length) {
-      console.error("loadData errors:", errors)
-      setError(errors.join(" | "))
-    }
-
-    setLoading(false)
+  if (errors.length) {
+    console.error('loadData errors:', errors);
+    setError(errors.join(' | '));
   }
+
+  setLoading(false);
+};
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
