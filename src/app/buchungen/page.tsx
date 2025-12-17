@@ -73,33 +73,43 @@ export default function BuchungenPage() {
   }, []);
 
   const loadData = async () => {
-    try {
-      setLoading(true);
-      const [buchungenRes, kundenRes, mitarbeiterRes, behandlungenRes, filialenRes] = await Promise.all([
-        buchungenService.getAll(),
-        kundenService.getAll(),
-        mitarbeiterService.getActive(),
-        behandlungenService.getActive(),
-        filialenService.getActive(),
-      ]);
-      
-      if (buchungenRes.error) throw buchungenRes.error;
-      if (kundenRes.error) throw kundenRes.error;
-      if (mitarbeiterRes.error) throw mitarbeiterRes.error;
-      if (behandlungenRes.error) throw behandlungenRes.error;
-      if (filialenRes.error) throw filialenRes.error;
-      
-      setBuchungen(buchungenRes.data || []);
-      setKunden(kundenRes.data || []);
-      setMitarbeiter(mitarbeiterRes.data || []);
-      setBehandlungen(behandlungenRes.data || []);
-      setFilialen(filialenRes.data || []);
-    } catch (err) {
-      setError('Fehler beim Laden der Daten');
-    } finally {
-      setLoading(false);
-    }
-  };
+  setLoading(true);
+  setError('');
+
+  const results = await Promise.allSettled([
+    buchungenService.getAll(),
+    kundenService.getAll(),
+    mitarbeiterService.getActive(),
+    behandlungenService.getActive(),
+    filialenService.getActive(),
+  ]);
+
+  const [bRes, kRes, mRes, beRes, fRes] = results;
+  const errors: string[] = [];
+
+  if (bRes.status === 'fulfilled') setBuchungen(bRes.value.data || []);
+  else errors.push('Buchungen: ' + String(bRes.reason));
+
+  if (kRes.status === 'fulfilled') setKunden(kRes.value.data || []);
+  else errors.push('Kunden: ' + String(kRes.reason));
+
+  if (mRes.status === 'fulfilled') setMitarbeiter(mRes.value.data || []);
+  else errors.push('Mitarbeiter: ' + String(mRes.reason));
+
+  if (beRes.status === 'fulfilled') setBehandlungen(beRes.value.data || []);
+  else errors.push('Behandlungen: ' + String(beRes.reason));
+
+  if (fRes.status === 'fulfilled') setFilialen(fRes.value.data || []);
+  else errors.push('Filialen: ' + String(fRes.reason));
+
+  if (errors.length) {
+    console.error('loadData errors:', errors);
+    setError(errors.join(' | '));
+  }
+
+  setLoading(false);
+};
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
