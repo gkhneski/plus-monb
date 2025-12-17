@@ -13,6 +13,8 @@ type Mitarbeiter = Database['public']['Tables']['mitarbeiter']['Row'];
 type Behandlung = Database['public']['Tables']['behandlungen']['Row'];
 type Filiale = Database['public']['Tables']['filialen']['Row'];
 
+type BookingStatus = 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
+
 interface BuchungWithRelations {
   id: string;
   kunde_id: string;
@@ -21,7 +23,7 @@ interface BuchungWithRelations {
   filiale_id: string | null;
   start_at: string;
   end_at: string;
-  status: 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
+  status: BookingStatus;
   notiz: string | null;
   kunden?: {
     id: string;
@@ -30,21 +32,21 @@ interface BuchungWithRelations {
     email: string | null;
     telefon: string | null;
   } | null;
-  mitarbeiter?: {
-    id: string;
-    name: string;
-  } | null;
-  behandlungen?: {
-    id: string;
-    name: string;
-    dauer_min: number;
-    preis_eur: number;
-  } | null;
-  filialen?: {
-    id: string;
-    name: string;
-  } | null;
+  mitarbeiter?: { id: string; name: string } | null;
+  behandlungen?: { id: string; name: string; dauer_min: number; preis_eur: number } | null;
+  filialen?: { id: string; name: string } | null;
 }
+
+type FormState = {
+  kunde_id: string;
+  mitarbeiter_id: string;
+  behandlung_id: string; // leer-string = null
+  filiale_id: string;    // leer-string = null
+  start_at: string;      // datetime-local string
+  duration_min: string;  // number as string
+  status: BookingStatus;
+  notiz: string;
+};
 
 export default function BuchungenPage() {
   const [buchungen, setBuchungen] = useState<BuchungWithRelations[]>([]);
@@ -56,141 +58,66 @@ export default function BuchungenPage() {
   const [error, setError] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState({
+  const [submitting, setSubmitting] = useState(false);
+
+  const [formData, setFormData] = useState<FormState>({
     kunde_id: '',
     mitarbeiter_id: '',
     behandlung_id: '',
     filiale_id: '',
     start_at: '',
     duration_min: '',
-    status: 'scheduled\' as \'scheduled\' | \'confirmed\' | \'completed\' | \'cancelled\' | \'no_show',
+    status: 'scheduled',
     notiz: '',
   });
-  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     loadData();
   }, []);
 
   const loadData = async () => {
-  setLoading(true);
-  setError('');
-
-  const results = await Promise.allSettled([
-    buchungenService.getAll(),
-    kundenService.getAll(),
-    mitarbeiterService.getActive(),
-    behandlungenService.getActive(),
-    filialenService.getActive(),
-  ]);
-
-  const [bRes, kRes, mRes, beRes, fRes] = results;
-  const errors: string[] = [];
-
-  if (bRes.status === 'fulfilled') setBuchungen(bRes.value.data || []);
-  else errors.push('Buchungen: ' + String(bRes.reason));
-
-  if (kRes.status === 'fulfilled') setKunden(kRes.value.data || []);
-  else errors.push('Kunden: ' + String(kRes.reason));
-
-  if (mRes.status === 'fulfilled') setMitarbeiter(mRes.value.data || []);
-  else errors.push('Mitarbeiter: ' + String(mRes.reason));
-
-  if (beRes.status === 'fulfilled') setBehandlungen(beRes.value.data || []);
-  else errors.push('Behandlungen: ' + String(beRes.reason));
-
-  if (fRes.status === 'fulfilled') setFilialen(fRes.value.data || []);
-  else errors.push('Filialen: ' + String(fRes.reason));
-
-  if (errors.length) {
-    console.error('loadData errors:', errors);
-    setError(errors.join(' | '));
-  }
-
-  setLoading(false);
-};
-
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
+    setLoading(true);
     setError('');
 
-    try {
-      // Calculate end_at from start_at + duration
-      const startDate = new Date(formData.start_at);
-      const durationMin = parseInt(formData.duration_min);
-      const endDate = new Date(startDate.getTime() + durationMin * 60000);
+    const results = await Promise.allSettled([
+      buchungenService.getAll(),
+      kundenService.getAll(),
+      mitarbeiterService.getActive(),
+      behandlungenService.getActive(),
+      filialenService.getActive(),
+    ]);
 
-      const submitData = {
-        kunde_id: formData.kunde_id,
-        mitarbeiter_id: formData.mitarbeiter_id,
-        behandlung_id: formData.behandlung_id || null,
-        filiale_id: formData.filiale_id || null,
-        start_at: formData.start_at,
-        end_at: endDate.toISOString(),
-        status: formData.status,
-        notiz: formData.notiz || null,
-      };
+    const errors: string[] = [];
 
-      if (editingId) {
-        const { error } = await buchungenService.update(editingId, submitData);
-        if (error) throw error;
-      } else {
-        const { error } = await buchungenService.create(submitData);
-        if (error) throw error;
+    const handle = <T,>(
+      res: PromiseSettledResult<{ data: T[] | null; error: any }>,
+      label: string,
+      setter: (v: T[]) => void
+    ) => {
+      if (res.status === 'rejected') {
+        errors.push(`${label}: ${String(res.reason)}`);
+        return;
       }
-      
-      await loadData();
-      setIsFormOpen(false);
-      resetForm();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Fehler beim Speichern');
-    } finally {
-      setSubmitting(false);
+      const { data, error } = res.value;
+      if (error) {
+        errors.push(`${label}: ${error.message ?? JSON.stringify(error)}`);
+        return;
+      }
+      setter(data || []);
+    };
+
+    handle(results[0] as any, 'Buchungen', setBuchungen);
+    handle(results[1] as any, 'Kunden', setKunden);
+    handle(results[2] as any, 'Mitarbeiter', setMitarbeiter);
+    handle(results[3] as any, 'Behandlungen', setBehandlungen);
+    handle(results[4] as any, 'Filialen', setFilialen);
+
+    if (errors.length) {
+      console.error('loadData errors:', errors);
+      setError(errors.join(' | '));
     }
-  };
 
-  const handleEdit = (buchung: BuchungWithRelations) => {
-    // Calculate duration from start_at and end_at
-    const start = new Date(buchung.start_at);
-    const end = new Date(buchung.end_at);
-    const durationMin = Math.round((end.getTime() - start.getTime()) / 60000);
-
-    setEditingId(buchung.id);
-    setFormData({
-      kunde_id: buchung.kunde_id,
-      mitarbeiter_id: buchung.mitarbeiter_id,
-      behandlung_id: buchung.behandlung_id || '',
-      filiale_id: buchung.filiale_id || '',
-      start_at: buchung.start_at.slice(0, 16), // Format for datetime-local input
-      duration_min: durationMin.toString(),
-      status: buchung.status,
-      notiz: buchung.notiz || '',
-    });
-    setIsFormOpen(true);
-  };
-
-  const handleUpdateStatus = async (id: string, status: 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no_show') => {
-    try {
-      const { error } = await buchungenService.updateStatus(id, status);
-      if (error) throw error;
-      await loadData();
-    } catch (err) {
-      setError('Fehler beim Aktualisieren des Status');
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('Möchten Sie diese Buchung wirklich löschen?')) return;
-    
-    try {
-      const { error } = await buchungenService.delete(id);
-      if (error) throw error;
-      await loadData();
-    } catch (err) {
-      setError('Fehler beim Löschen der Buchung');
-    }
+    setLoading(false);
   };
 
   const resetForm = () => {
@@ -209,31 +136,100 @@ export default function BuchungenPage() {
 
   const handleBehandlungChange = (behandlungId: string) => {
     const behandlung = behandlungen.find((b) => b.id === behandlungId);
-    setFormData({
-      ...formData,
+    setFormData((prev) => ({
+      ...prev,
       behandlung_id: behandlungId,
-      duration_min: behandlung ? behandlung.dauer_min.toString() : '',
-    });
+      duration_min: behandlung ? String(behandlung.dauer_min) : prev.duration_min,
+    }));
   };
 
-  const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'scheduled':
-        return 'Geplant';
-      case 'confirmed':
-        return 'Bestätigt';
-      case 'completed':
-        return 'Abgeschlossen';
-      case 'cancelled':
-        return 'Storniert';
-      case 'no_show':
-        return 'Nicht erschienen';
-      default:
-        return status;
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError('');
+
+    try {
+      const durationMin = Number.parseInt(formData.duration_min, 10);
+      if (!formData.start_at) throw new Error('Startzeit fehlt');
+      if (!Number.isFinite(durationMin) || durationMin <= 0) throw new Error('Dauer ungültig');
+
+      // datetime-local -> Date (Browser lokal), dann ISO für DB (UTC)
+      const startDate = new Date(formData.start_at);
+      if (Number.isNaN(startDate.getTime())) throw new Error('Startzeit ungültig');
+
+      const endDate = new Date(startDate.getTime() + durationMin * 60000);
+
+      const submitData = {
+        kunde_id: formData.kunde_id,
+        mitarbeiter_id: formData.mitarbeiter_id,
+        behandlung_id: formData.behandlung_id || null,
+        filiale_id: formData.filiale_id || null,
+        start_at: startDate.toISOString(),
+        end_at: endDate.toISOString(),
+        status: formData.status,
+        notiz: formData.notiz || null,
+      };
+
+      if (editingId) {
+        const { error } = await buchungenService.update(editingId, submitData);
+        if (error) throw error;
+      } else {
+        const { error } = await buchungenService.create(submitData);
+        if (error) throw error;
+      }
+
+      await loadData();
+      setIsFormOpen(false);
+      resetForm();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Fehler beim Speichern');
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const getStatusColor = (status: string) => {
+  const handleEdit = (buchung: BuchungWithRelations) => {
+    const start = new Date(buchung.start_at);
+    const end = new Date(buchung.end_at);
+    const durationMin = Math.round((end.getTime() - start.getTime()) / 60000);
+
+    setEditingId(buchung.id);
+    setFormData({
+      kunde_id: buchung.kunde_id,
+      mitarbeiter_id: buchung.mitarbeiter_id,
+      behandlung_id: buchung.behandlung_id || '',
+      filiale_id: buchung.filiale_id || '',
+      start_at: buchung.start_at.slice(0, 16),
+      duration_min: String(durationMin > 0 ? durationMin : ''),
+      status: buchung.status,
+      notiz: buchung.notiz || '',
+    });
+    setIsFormOpen(true);
+  };
+
+  const handleUpdateStatus = async (id: string, status: BookingStatus) => {
+    try {
+      const { error } = await buchungenService.updateStatus(id, status);
+      if (error) throw error;
+      await loadData();
+    } catch {
+      setError('Fehler beim Aktualisieren des Status');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Möchten Sie diese Buchung wirklich löschen?')) return;
+
+    try {
+      const { error } = await buchungenService.delete(id);
+      if (error) throw error;
+      await loadData();
+    } catch {
+      setError('Fehler beim Löschen der Buchung');
+    }
+  };
+
+  const getStatusColor = (status: BookingStatus) => {
     switch (status) {
       case 'scheduled':
         return 'bg-blue-100 text-blue-800';
@@ -264,7 +260,7 @@ export default function BuchungenPage() {
   return (
     <div className="flex h-screen bg-gray-50">
       <Sidebar />
-      
+
       <div className="flex-1 overflow-auto">
         <div className="p-8">
           <div className="max-w-7xl mx-auto">
@@ -323,7 +319,7 @@ export default function BuchungenPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {buchungen?.map((buchung) => (
+                    {buchungen.map((buchung) => (
                       <tr key={buchung.id} className="hover:bg-gray-50">
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {formatDateTime(buchung.start_at)}
@@ -340,12 +336,7 @@ export default function BuchungenPage() {
                         <td className="px-6 py-4 whitespace-nowrap">
                           <select
                             value={buchung.status}
-                            onChange={(e) =>
-                              handleUpdateStatus(
-                                buchung.id,
-                                e.target.value as 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
-                              )
-                            }
+                            onChange={(e) => handleUpdateStatus(buchung.id, e.target.value as BookingStatus)}
                             className={`px-2 py-1 text-xs leading-5 font-semibold rounded-full ${getStatusColor(
                               buchung.status
                             )}`}
@@ -358,16 +349,10 @@ export default function BuchungenPage() {
                           </select>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                          <button
-                            onClick={() => handleEdit(buchung)}
-                            className="text-indigo-600 hover:text-indigo-900 mr-4"
-                          >
+                          <button onClick={() => handleEdit(buchung)} className="text-indigo-600 hover:text-indigo-900 mr-4">
                             Bearbeiten
                           </button>
-                          <button
-                            onClick={() => handleDelete(buchung.id)}
-                            className="text-red-600 hover:text-red-900"
-                          >
+                          <button onClick={() => handleDelete(buchung.id)} className="text-red-600 hover:text-red-900">
                             Löschen
                           </button>
                         </td>
@@ -378,7 +363,6 @@ export default function BuchungenPage() {
               </div>
             )}
 
-            {/* Form Modal */}
             {isFormOpen && (
               <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
                 <div className="relative top-20 mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-md bg-white">
@@ -386,42 +370,36 @@ export default function BuchungenPage() {
                     <h3 className="text-lg font-medium leading-6 text-gray-900 mb-4">
                       {editingId ? 'Buchung bearbeiten' : 'Neue Buchung'}
                     </h3>
+
                     <form onSubmit={handleSubmit} className="space-y-4">
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Kunde *
-                          </label>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Kunde *</label>
                           <select
                             required
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             value={formData.kunde_id}
-                            onChange={(e) =>
-                              setFormData({ ...formData, kunde_id: e.target.value })
-                            }
+                            onChange={(e) => setFormData((p) => ({ ...p, kunde_id: e.target.value }))}
                           >
                             <option value="">Kunde auswählen</option>
-                            {kunden?.map((kunde) => (
+                            {kunden.map((kunde) => (
                               <option key={kunde.id} value={kunde.id}>
                                 {kunde.vorname} {kunde.nachname}
                               </option>
                             ))}
                           </select>
                         </div>
+
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Mitarbeiter *
-                          </label>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Mitarbeiter *</label>
                           <select
                             required
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             value={formData.mitarbeiter_id}
-                            onChange={(e) =>
-                              setFormData({ ...formData, mitarbeiter_id: e.target.value })
-                            }
+                            onChange={(e) => setFormData((p) => ({ ...p, mitarbeiter_id: e.target.value }))}
                           >
                             <option value="">Mitarbeiter auswählen</option>
-                            {mitarbeiter?.map((m) => (
+                            {mitarbeiter.map((m) => (
                               <option key={m.id} value={m.id}>
                                 {m.name}
                               </option>
@@ -432,35 +410,30 @@ export default function BuchungenPage() {
 
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Behandlung
-                          </label>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Behandlung</label>
                           <select
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             value={formData.behandlung_id}
                             onChange={(e) => handleBehandlungChange(e.target.value)}
                           >
                             <option value="">Keine Behandlung</option>
-                            {behandlungen?.map((b) => (
+                            {behandlungen.map((b) => (
                               <option key={b.id} value={b.id}>
-                                {b.name} ({b.dauer_min} Min., {b.preis_eur}€)
+                                {b.name} ({(b as any).dauer_min ?? ''} Min., {(b as any).preis_eur ?? ''}€)
                               </option>
                             ))}
                           </select>
                         </div>
+
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Filiale
-                          </label>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Filiale</label>
                           <select
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             value={formData.filiale_id}
-                            onChange={(e) =>
-                              setFormData({ ...formData, filiale_id: e.target.value })
-                            }
+                            onChange={(e) => setFormData((p) => ({ ...p, filiale_id: e.target.value }))}
                           >
                             <option value="">Keine Filiale</option>
-                            {filialen?.map((f) => (
+                            {filialen.map((f) => (
                               <option key={f.id} value={f.id}>
                                 {f.name}
                               </option>
@@ -471,49 +444,35 @@ export default function BuchungenPage() {
 
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Startzeit *
-                          </label>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Startzeit *</label>
                           <input
                             type="datetime-local"
                             required
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             value={formData.start_at}
-                            onChange={(e) =>
-                              setFormData({ ...formData, start_at: e.target.value })
-                            }
+                            onChange={(e) => setFormData((p) => ({ ...p, start_at: e.target.value }))}
                           />
                         </div>
+
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Dauer (Minuten) *
-                          </label>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Dauer (Minuten) *</label>
                           <input
                             type="number"
                             required
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             value={formData.duration_min}
-                            onChange={(e) =>
-                              setFormData({ ...formData, duration_min: e.target.value })
-                            }
+                            onChange={(e) => setFormData((p) => ({ ...p, duration_min: e.target.value }))}
                             placeholder="z.B. 30, 60, 90"
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Status
-                        </label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
                         <select
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                           value={formData.status}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              status: e.target.value as 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no_show',
-                            })
-                          }
+                          onChange={(e) => setFormData((p) => ({ ...p, status: e.target.value as BookingStatus }))}
                         >
                           <option value="scheduled">Geplant</option>
                           <option value="confirmed">Bestätigt</option>
@@ -524,16 +483,12 @@ export default function BuchungenPage() {
                       </div>
 
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Notiz
-                        </label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Notiz</label>
                         <textarea
                           rows={3}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                           value={formData.notiz}
-                          onChange={(e) =>
-                            setFormData({ ...formData, notiz: e.target.value })
-                          }
+                          onChange={(e) => setFormData((p) => ({ ...p, notiz: e.target.value }))}
                         />
                       </div>
 
@@ -558,6 +513,7 @@ export default function BuchungenPage() {
                         </button>
                       </div>
                     </form>
+
                   </div>
                 </div>
               </div>
