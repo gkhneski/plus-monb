@@ -187,7 +187,26 @@ export default function OnlineKalenderPage() {
   const [formRoomId, setFormRoomId] = useState<string>("unassigned")
   const [formResourceId, setFormResourceId] = useState<string>("unassigned")
 
+  // ✅ Scroll-Sync Refs
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const timeAxisRef = useRef<HTMLDivElement | null>(null)
+  const syncingRef = useRef(false)
+
+  const syncFromGrid = () => {
+    if (syncingRef.current) return
+    if (!scrollRef.current || !timeAxisRef.current) return
+    syncingRef.current = true
+    timeAxisRef.current.scrollTop = scrollRef.current.scrollTop
+    requestAnimationFrame(() => (syncingRef.current = false))
+  }
+
+  const syncFromAxis = () => {
+    if (syncingRef.current) return
+    if (!scrollRef.current || !timeAxisRef.current) return
+    syncingRef.current = true
+    scrollRef.current.scrollTop = timeAxisRef.current.scrollTop
+    requestAnimationFrame(() => (syncingRef.current = false))
+  }
 
   const timeSlots = useMemo(() => {
     const slots: { hh: number; mm: number; label: string }[] = []
@@ -200,8 +219,9 @@ export default function OnlineKalenderPage() {
     return slots
   }, [])
 
+  // ✅ FIX: gridHeight so, dass 20:00 NICHT abgeschnitten wird
   const gridHeight = useMemo(() => {
-    const totalMinutes = (END_HOUR - START_HOUR) * 60
+    const totalMinutes = (END_HOUR - START_HOUR) * 60 + SLOT_MINUTES // +15
     const slots = totalMinutes / SLOT_MINUTES
     return slots * SLOT_HEIGHT
   }, [])
@@ -333,9 +353,11 @@ export default function OnlineKalenderPage() {
     } finally {
       setLoading(false)
       setTimeout(() => {
-        if (!scrollRef.current) return
         const targetMin = (10 - START_HOUR) * 60
-        scrollRef.current.scrollTop = (targetMin / SLOT_MINUTES) * SLOT_HEIGHT
+        const top = (targetMin / SLOT_MINUTES) * SLOT_HEIGHT
+
+        if (scrollRef.current) scrollRef.current.scrollTop = top
+        if (timeAxisRef.current) timeAxisRef.current.scrollTop = top
       }, 50)
     }
   }
@@ -718,7 +740,7 @@ export default function OnlineKalenderPage() {
       <Sidebar />
 
       <main className="flex-1 p-6">
-        <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Online Kalender</h1>
             <p className="mt-1 text-sm text-gray-500">
@@ -848,22 +870,25 @@ export default function OnlineKalenderPage() {
         <div className="mt-6 flex gap-4">
           <div className="flex-1 rounded-xl border bg-white overflow-hidden">
             <div className="flex items-stretch">
-              <div className="w-20 border-r bg-gray-50">
+              {/* ✅ Zeitachse: scrollbar + sync */}
+              <div className="w-20 border-r bg-gray-50 flex flex-col">
                 <div className="h-14 border-b" />
-                <div className="relative" style={{ height: gridHeight }}>
-                  {timeSlots.map((s) => {
-                    const isHour = s.mm === 0
-                    const top = ((s.hh - START_HOUR) * 60 + s.mm) / SLOT_MINUTES * SLOT_HEIGHT
-                    return (
-                      <div
-                        key={s.label}
-                        className="absolute left-0 right-0 pr-2 text-right text-xs text-gray-500"
-                        style={{ top: top - 8 }}
-                      >
-                        {isHour ? s.label : ""}
-                      </div>
-                    )
-                  })}
+                <div ref={timeAxisRef} className="h-[70vh] overflow-auto" onScroll={syncFromAxis}>
+                  <div className="relative" style={{ height: gridHeight }}>
+                    {timeSlots.map((s) => {
+                      const isHour = s.mm === 0
+                      const top = ((s.hh - START_HOUR) * 60 + s.mm) / SLOT_MINUTES * SLOT_HEIGHT
+                      return (
+                        <div
+                          key={s.label}
+                          className="absolute left-0 right-0 pr-2 text-right text-xs text-gray-500"
+                          style={{ top: top - 8 }}
+                        >
+                          {isHour ? s.label : ""}
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -931,7 +956,8 @@ export default function OnlineKalenderPage() {
                   </div>
                 )}
 
-                <div ref={scrollRef} className="h-[70vh] overflow-auto">
+                {/* ✅ Grid-Scroll: sync zur Zeitachse */}
+                <div ref={scrollRef} className="h-[70vh] overflow-auto" onScroll={syncFromGrid}>
                   {/* WEEK */}
                   {viewMode === "week" && (
                     <div className="grid" style={{ gridTemplateColumns: "repeat(7, minmax(200px, 1fr))" }}>
@@ -1533,3 +1559,4 @@ export default function OnlineKalenderPage() {
     </div>
   )
 }
+
