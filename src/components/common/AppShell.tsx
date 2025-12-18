@@ -1,20 +1,32 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Menu } from 'lucide-react';
 import Sidebar from './Sidebar';
 
-type AppShellProps = {
-  children: React.ReactNode;
-};
-
-export default function AppShell({ children }: AppShellProps) {
+export default function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  // Body scroll lock wenn Drawer offen
+  // Scroll lock + ESC close
   useEffect(() => {
-    document.body.style.overflow = mobileOpen ? 'hidden' : '';
+    if (!mobileOpen) return;
+
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileOpen(false);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+
+    // Fokus auf Close in Sidebar (wenn vorhanden)
+    setTimeout(() => closeBtnRef.current?.focus(), 0);
+
     return () => {
-      document.body.style.overflow = '';
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKeyDown);
     };
   }, [mobileOpen]);
 
@@ -22,22 +34,8 @@ export default function AppShell({ children }: AppShellProps) {
     <div className="min-h-dvh bg-slate-950 text-white">
       {/* Desktop Sidebar */}
       <div className="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-64">
-        <Sidebar variant="desktop" onNavigate={() => setMobileOpen(false)} />
+        <Sidebar variant="desktop" />
       </div>
-
-      {/* Mobile Drawer + Overlay */}
-      {mobileOpen && (
-        <div className="lg:hidden fixed inset-0 z-50">
-          <button
-            aria-label="Close sidebar overlay"
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setMobileOpen(false)}
-          />
-          <div className="absolute inset-y-0 left-0 w-[86vw] max-w-[320px]">
-            <Sidebar variant="mobile" onNavigate={() => setMobileOpen(false)} />
-          </div>
-        </div>
-      )}
 
       {/* Main */}
       <div className="lg:pl-64">
@@ -45,11 +43,14 @@ export default function AppShell({ children }: AppShellProps) {
         <header className="lg:hidden sticky top-0 z-40 border-b border-slate-800 bg-slate-950/90 backdrop-blur">
           <div className="flex items-center gap-3 px-4 py-3">
             <button
+              type="button"
               onClick={() => setMobileOpen(true)}
-              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 active:scale-[0.99]"
-              aria-label="Open menu"
+              className="rounded-xl border border-white/10 bg-white/5 p-2 hover:bg-white/10 active:scale-[0.99]"
+              aria-label="Menü öffnen"
+              aria-expanded={mobileOpen}
+              aria-controls="mobile-drawer"
             >
-              ☰
+              <Menu className="h-5 w-5" />
             </button>
 
             <div className="min-w-0">
@@ -60,9 +61,48 @@ export default function AppShell({ children }: AppShellProps) {
         </header>
 
         {/* Content */}
-        <main className="px-4 sm:px-6 lg:px-8 py-4 lg:py-6">
-          {children}
-        </main>
+        <main className="px-4 sm:px-6 lg:px-8 py-4 lg:py-6">{children}</main>
+      </div>
+
+      {/* Mobile Drawer */}
+      <div
+        className={[
+          'lg:hidden fixed inset-0 z-50',
+          mobileOpen ? 'pointer-events-auto' : 'pointer-events-none',
+        ].join(' ')}
+        aria-hidden={!mobileOpen}
+      >
+        {/* Overlay */}
+        <button
+          type="button"
+          className={[
+            'absolute inset-0 bg-black/55 transition-opacity',
+            mobileOpen ? 'opacity-100' : 'opacity-0',
+          ].join(' ')}
+          aria-label="Overlay schließen"
+          onClick={() => setMobileOpen(false)}
+        />
+
+        {/* Panel */}
+        <div
+          id="mobile-drawer"
+          role="dialog"
+          aria-modal="true"
+          className={[
+            'absolute inset-y-0 left-0 w-[86vw] max-w-[340px]',
+            'transition-transform duration-200 ease-out',
+            mobileOpen ? 'translate-x-0' : '-translate-x-full',
+          ].join(' ')}
+        >
+          {/* Trick: wir geben Close-Fokus über ref, ohne Sidebar umzubauen */}
+          <div className="sr-only">
+            <button ref={closeBtnRef} onClick={() => setMobileOpen(false)}>
+              close
+            </button>
+          </div>
+
+          <Sidebar variant="mobile" onNavigate={() => setMobileOpen(false)} />
+        </div>
       </div>
     </div>
   );
