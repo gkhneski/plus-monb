@@ -2,6 +2,12 @@ import React from 'react';
 import '../styles/index.css';
 import ClientLayout from '../components/common/ClientLayout';
 
+import AppShell from '@/components/common/AppShell';
+
+export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
+  return <AppShell>{children}</AppShell>;
+}
+
 export const viewport = {
   width: 'device-width',
   initialScale: 1,
