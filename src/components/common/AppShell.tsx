@@ -20,8 +20,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
 
     window.addEventListener('keydown', onKeyDown);
-
-    // Fokus auf Close in Sidebar (wenn vorhanden)
     setTimeout(() => closeBtnRef.current?.focus(), 0);
 
     return () => {
@@ -31,14 +29,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [mobileOpen]);
 
   return (
-    <div className="min-h-dvh bg-slate-950 text-white">
+    <div className="min-h-dvh bg-slate-950 text-white overflow-x-hidden">
       {/* Desktop Sidebar */}
       <div className="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-64">
         <Sidebar variant="desktop" />
       </div>
 
       {/* Main */}
-      <div className="lg:pl-64">
+      <div className="lg:pl-64 min-w-0">
         {/* Mobile Topbar */}
         <header className="lg:hidden sticky top-0 z-40 border-b border-slate-800 bg-slate-950/90 backdrop-blur">
           <div className="flex items-center gap-3 px-4 py-3">
@@ -61,7 +59,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* Content */}
-        <main className="px-4 sm:px-6 lg:px-8 py-4 lg:py-6">{children}</main>
+        <main className="px-4 sm:px-6 lg:px-8 py-4 lg:py-6 min-w-0">
+          {children}
+        </main>
       </div>
 
       {/* Mobile Drawer */}
@@ -94,7 +94,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             mobileOpen ? 'translate-x-0' : '-translate-x-full',
           ].join(' ')}
         >
-          {/* Trick: wir geben Close-Fokus über ref, ohne Sidebar umzubauen */}
           <div className="sr-only">
             <button ref={closeBtnRef} onClick={() => setMobileOpen(false)}>
               close

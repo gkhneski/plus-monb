@@ -19,7 +19,7 @@ import {
 
 type SidebarProps = {
   variant?: 'desktop' | 'mobile';
-  onNavigate?: () => void; // z.B. Drawer schließen nach Klick
+  onNavigate?: () => void; // Drawer schließen nach Klick (mobile)
 };
 
 export default function Sidebar({ variant = 'desktop', onNavigate }: SidebarProps) {
@@ -99,8 +99,8 @@ export default function Sidebar({ variant = 'desktop', onNavigate }: SidebarProp
           )}
         </div>
 
-        {/* Nav (scrollt nur hier) */}
-        <nav className="flex-1 overflow-y-auto px-3 py-3">
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto px-3 py-3" aria-label="Hauptnavigation">
           <div className="space-y-1">
             {menuItems.map((item) => {
               const Icon = item.icon;
@@ -152,7 +152,7 @@ export default function Sidebar({ variant = 'desktop', onNavigate }: SidebarProp
           <button
             onClick={handleSignOut}
             className="w-full rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-2.5 text-[13px] font-semibold text-red-100
-                       hover:bg-red-500/15 hover:border-red-500/35 transition-colors"
+                     hover:bg-red-500/15 hover:border-red-500/35 transition-colors"
           >
             <span className="flex items-center justify-center gap-2">
               <LogOut className="h-4 w-4" />

@@ -2,12 +2,6 @@ import React from 'react';
 import '../styles/index.css';
 import ClientLayout from '../components/common/ClientLayout';
 
-import AppShell from '@/components/common/AppShell';
-
-export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
-  return <AppShell>{children}</AppShell>;
-}
-
 export const viewport = {
   width: 'device-width',
   initialScale: 1,
@@ -17,9 +11,7 @@ export const metadata = {
   title: 'Cosmetics Studio - Buchungssystem',
   description: 'Professionelles Buchungssystem für Ihr Cosmetics Studio',
   icons: {
-    icon: [
-      { url: '/favicon.ico', type: 'image/x-icon' }
-    ],
+    icon: [{ url: '/favicon.ico', type: 'image/x-icon' }],
   },
 };
 
@@ -31,12 +23,15 @@ export default function RootLayout({
   return (
     <html lang="de">
       <body>
-        <ClientLayout>
-          {children}
-        </ClientLayout>
+        <ClientLayout>{children}</ClientLayout>
 
-        <script type="module" async src="https://static.rocket.new/rocket-web.js?_cfg=https%3A%2F%2Fcosmetics9345back.builtwithrocket.new&_be=https%3A%2F%2Fapplication.rocket.new&_v=0.1.12" />
-        <script type="module" defer src="https://static.rocket.new/rocket-shot.js?v=0.0.1" /></body>
+        <script
+          type="module"
+          async
+          src="https://static.rocket.new/rocket-web.js?_cfg=https%3A%2F%2Fcosmetics9345back.builtwithrocket.new&_be=https%3A%2F%2Fapplication.rocket.new&_v=0.1.12"
+        />
+        <script type="module" defer src="https://static.rocket.new/rocket-shot.js?v=0.0.1" />
+      </body>
     </html>
   );
 }
