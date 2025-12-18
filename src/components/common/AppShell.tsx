@@ -8,7 +8,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  // Scroll lock + ESC close
   useEffect(() => {
     if (!mobileOpen) return;
 
@@ -59,9 +58,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* Content */}
-        <main className="px-4 sm:px-6 lg:px-8 py-4 lg:py-6 min-w-0">
-          {children}
-        </main>
+        <main className="px-4 sm:px-6 lg:px-8 py-4 lg:py-6 min-w-0">{children}</main>
       </div>
 
       {/* Mobile Drawer */}

@@ -19,7 +19,7 @@ import {
 
 type SidebarProps = {
   variant?: 'desktop' | 'mobile';
-  onNavigate?: () => void; // Drawer schließen nach Klick (mobile)
+  onNavigate?: () => void;
 };
 
 export default function Sidebar({ variant = 'desktop', onNavigate }: SidebarProps) {
@@ -52,13 +52,14 @@ export default function Sidebar({ variant = 'desktop', onNavigate }: SidebarProp
     return pathname === path || pathname.startsWith(path + '/');
   };
 
+  // WICHTIG: Desktop braucht wieder feste Breite (sonst frisst Sidebar den ganzen Screen)
+  const asideClass =
+    variant === 'desktop'
+      ? 'sticky top-0 h-screen w-64 shrink-0 border-r border-slate-800 bg-slate-950 text-white'
+      : 'h-full w-full border-r border-slate-800 bg-slate-950 text-white shadow-2xl';
+
   return (
-    <aside
-      className={[
-        'h-full w-full shrink-0 border-r border-slate-800 bg-slate-950 text-white',
-        variant === 'mobile' ? 'shadow-2xl' : '',
-      ].join(' ')}
-    >
+    <aside className={asideClass}>
       <div className="flex h-full flex-col">
         {/* Header */}
         <div className="px-4 py-4 border-b border-slate-800">
