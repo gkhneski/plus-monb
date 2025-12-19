@@ -1,23 +1,18 @@
-'use client';
+"use client";
 
-import React from 'react';
-import { usePathname } from 'next/navigation';
-import AppShell from './AppShell';
-
-const PUBLIC_ROUTES = ['/login', '/signup'];
-
-function isPublicRoute(pathname: string) {
-  return PUBLIC_ROUTES.some((r) => pathname === r || pathname.startsWith(r + '/'));
-}
+import React, { useMemo } from "react";
+import { usePathname } from "next/navigation";
+import AppShell from "./AppShell";
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname() || '/';
+  const pathname = usePathname();
 
-  // Public pages: kein AppShell/keine Sidebar
-  if (isPublicRoute(pathname)) {
-    return <>{children}</>;
-  }
+  const hideShell = useMemo(() => {
+    if (!pathname) return false;
+    return pathname === "/login" || pathname.startsWith("/signup");
+  }, [pathname]);
 
-  // Protected pages: AppShell regelt responsive Sidebar (Desktop + Mobile Drawer)
+  if (hideShell) return <>{children}</>;
+
   return <AppShell>{children}</AppShell>;
 }

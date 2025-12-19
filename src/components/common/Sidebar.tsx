@@ -27,15 +27,6 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   const router = useRouter();
   const { signOut, user } = useAuth();
 
-  const handleSignOut = async () => {
-    try {
-      await signOut();
-      router.push("/login");
-    } catch (error) {
-      console.error("Logout error:", error);
-    }
-  };
-
   const menuItems = [
     { path: "/online-calendar", label: "Online Kalender", icon: Calendar },
     { path: "/buchungen", label: "Buchungen", icon: FileText },
@@ -47,14 +38,21 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   ];
 
   const isActive = (path: string) =>
-    pathname === path || pathname?.startsWith(path + "/");
+    pathname === path || (pathname?.startsWith(path + "/") ?? false);
 
-  // Overlay nur mobil
-  const showOverlay = open;
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      router.push("/login");
+    } catch (e) {
+      console.error("Logout error:", e);
+    }
+  };
 
   return (
     <>
-      {showOverlay && (
+      {/* Overlay (nur mobil) */}
+      {open && (
         <button
           aria-label="Sidebar schließen"
           onClick={onClose}
@@ -64,7 +62,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
       <aside
         className={[
-          "fixed inset-y-0 left-0 z-50 w-72 shrink-0",
+          "fixed inset-y-0 left-0 z-50 w-[288px] shrink-0",
           "bg-gradient-to-b from-slate-950 to-slate-900 text-white",
           "border-r border-white/10",
           "transform transition-transform duration-200 ease-out",
@@ -76,13 +74,17 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         {/* Header */}
         <div className="px-4 pt-4 pb-3">
           <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <div className="h-10 w-10 rounded-xl bg-white/10 flex items-center justify-center">
                 <Calendar className="h-5 w-5" />
               </div>
-              <div className="leading-tight">
-                <div className="text-base font-semibold">Booking Pro</div>
-                <div className="text-xs text-white/60">Management System</div>
+              <div className="leading-tight min-w-0">
+                <div className="text-base font-semibold truncate">
+                  Booking Pro
+                </div>
+                <div className="text-xs text-white/60 truncate">
+                  Management System
+                </div>
               </div>
             </div>
 
@@ -95,7 +97,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             </button>
           </div>
 
-          {/* User Card */}
+          {/* User */}
           <div className="mt-4 rounded-2xl bg-white/5 border border-white/10 p-3">
             <div className="text-sm font-medium truncate">
               {user?.email ?? "—"}
@@ -115,7 +117,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                 <li key={item.path}>
                   <Link
                     href={item.path}
-                    onClick={() => onClose()} // mobil: nach klick schließen
+                    onClick={onClose} // mobil: beim Klick schließen
                     className={[
                       "group flex items-center justify-between gap-3 rounded-2xl px-3 py-3",
                       "transition-colors",
