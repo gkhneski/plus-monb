@@ -1,31 +1,18 @@
-"use client";
-
-import React from "react";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import {
-  Calendar,
-  FileText,
-  Users,
-  Sparkles,
-  User,
-  Building2,
-  Settings,
-  LogOut,
-  ChevronRight,
-  X,
-} from "lucide-react";
-import { useAuth } from "../../contexts/AuthContext";
+"use client"
+import Link from "next/link"
+import { usePathname, useRouter } from "next/navigation"
+import { Calendar, FileText, Users, Sparkles, User, Building2, Settings, LogOut, ChevronRight, X } from "lucide-react"
+import { useAuth } from "../../contexts/AuthContext"
 
 type SidebarProps = {
-  open: boolean;
-  onClose: () => void;
-};
+  open: boolean
+  onClose: () => void
+}
 
 export default function Sidebar({ open, onClose }: SidebarProps) {
-  const pathname = usePathname();
-  const router = useRouter();
-  const { signOut, user } = useAuth();
+  const pathname = usePathname()
+  const router = useRouter()
+  const { signOut, user } = useAuth()
 
   const menuItems = [
     { path: "/online-calendar", label: "Online Kalender", icon: Calendar },
@@ -35,29 +22,24 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
     { path: "/mitarbeiter", label: "Mitarbeiter", icon: User },
     { path: "/filialen", label: "Filialen", icon: Building2 },
     { path: "/einstellungen", label: "Einstellungen", icon: Settings },
-  ];
+  ]
 
-  const isActive = (path: string) =>
-    pathname === path || (pathname?.startsWith(path + "/") ?? false);
+  const isActive = (path: string) => pathname === path || (pathname?.startsWith(path + "/") ?? false)
 
   const handleSignOut = async () => {
     try {
-      await signOut();
-      router.push("/login");
+      await signOut()
+      router.push("/login")
     } catch (e) {
-      console.error("Logout error:", e);
+      console.error("Logout error:", e)
     }
-  };
+  }
 
   return (
     <>
       {/* Overlay (nur mobil) */}
       {open && (
-        <button
-          aria-label="Sidebar schließen"
-          onClick={onClose}
-          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
-        />
+        <button aria-label="Sidebar schließen" onClick={onClose} className="fixed inset-0 z-40 bg-black/40 lg:hidden" />
       )}
 
       <aside
@@ -79,12 +61,8 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                 <Calendar className="h-5 w-5" />
               </div>
               <div className="leading-tight min-w-0">
-                <div className="text-base font-semibold truncate">
-                  Booking Pro
-                </div>
-                <div className="text-xs text-white/60 truncate">
-                  Management System
-                </div>
+                <div className="text-base font-semibold truncate">Booking Pro</div>
+                <div className="text-xs text-white/60 truncate">Management System</div>
               </div>
             </div>
 
@@ -99,9 +77,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
           {/* User */}
           <div className="mt-4 rounded-2xl bg-white/5 border border-white/10 p-3">
-            <div className="text-sm font-medium truncate">
-              {user?.email ?? "—"}
-            </div>
+            <div className="text-sm font-medium truncate">{user?.email ?? "—"}</div>
             <div className="text-xs text-white/60">Administrator</div>
           </div>
         </div>
@@ -110,8 +86,8 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         <nav className="px-3 py-2 flex-1 overflow-y-auto">
           <ul className="space-y-1">
             {menuItems.map((item) => {
-              const Icon = item.icon;
-              const active = isActive(item.path);
+              const Icon = item.icon
+              const active = isActive(item.path)
 
               return (
                 <li key={item.path}>
@@ -121,18 +97,14 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                     className={[
                       "group flex items-center justify-between gap-3 rounded-2xl px-3 py-3",
                       "transition-colors",
-                      active
-                        ? "bg-white/10 border border-white/10"
-                        : "hover:bg-white/7",
+                      active ? "bg-white/10 border border-white/10" : "hover:bg-white/7",
                     ].join(" ")}
                   >
                     <span className="flex items-center gap-3 min-w-0">
                       <span
                         className={[
                           "h-9 w-9 rounded-xl flex items-center justify-center border",
-                          active
-                            ? "bg-white/10 border-white/15"
-                            : "bg-white/5 border-white/10 group-hover:bg-white/7",
+                          active ? "bg-white/10 border-white/15" : "bg-white/5 border-white/10 group-hover:bg-white/7",
                         ].join(" ")}
                       >
                         <Icon className="h-5 w-5" />
@@ -143,7 +115,7 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                     <ChevronRight className="h-4 w-4 text-white/50" />
                   </Link>
                 </li>
-              );
+              )
             })}
           </ul>
         </nav>
@@ -160,5 +132,5 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         </div>
       </aside>
     </>
-  );
+  )
 }

@@ -1,18 +1,19 @@
-"use client";
+"use client"
 
-import React, { useMemo } from "react";
-import { usePathname } from "next/navigation";
-import AppShell from "./AppShell";
+import type React from "react"
+import { useMemo } from "react"
+import { usePathname } from "next/navigation"
+import AppShell from "./AppShell"
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
+  const pathname = usePathname()
 
   const hideShell = useMemo(() => {
-    if (!pathname) return false;
-    return pathname === "/login" || pathname.startsWith("/signup");
-  }, [pathname]);
+    if (!pathname) return false
+    return pathname === "/login" || pathname.startsWith("/signup")
+  }, [pathname])
 
-  if (hideShell) return <>{children}</>;
+  if (hideShell) return <>{children}</>
 
-  return <AppShell>{children}</AppShell>;
+  return <AppShell>{children}</AppShell>
 }

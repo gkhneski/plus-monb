@@ -1,13 +1,13 @@
-"use client";
+"use client"
 
-import React from "react";
-import { Menu } from "lucide-react";
+import type React from "react"
+import { Menu } from "lucide-react"
 
 type HeaderProps = {
-  title?: string;
-  onOpenSidebar: () => void;
-  rightSlot?: React.ReactNode; // optional: DateRangePicker / LocationSelector etc.
-};
+  title?: string
+  onOpenSidebar: () => void
+  rightSlot?: React.ReactNode // optional: DateRangePicker / LocationSelector etc.
+}
 
 export default function Header({ title, onOpenSidebar, rightSlot }: HeaderProps) {
   return (
@@ -23,14 +23,12 @@ export default function Header({ title, onOpenSidebar, rightSlot }: HeaderProps)
         </button>
 
         <div className="min-w-0 flex-1">
-          <div className="font-semibold text-slate-900 truncate">
-            {title ?? "Dashboard"}
-          </div>
+          <div className="font-semibold text-slate-900 truncate">{title ?? "Dashboard"}</div>
         </div>
 
         {/* optional right area */}
         {rightSlot ? <div className="flex items-center gap-2">{rightSlot}</div> : null}
       </div>
     </header>
-  );
+  )
 }
