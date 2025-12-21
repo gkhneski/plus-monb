@@ -44,31 +44,31 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
       <aside
         className={[
-          "fixed inset-y-0 left-0 z-50 w-[288px] shrink-0",
-          "bg-gradient-to-b from-slate-950 to-slate-900 text-white",
-          "border-r border-white/10",
+          "fixed inset-y-0 left-0 z-50 w-[280px] shrink-0",
+          "bg-white text-black",
+          "border-r border-gray-200",
           "transform transition-transform duration-200 ease-out",
           open ? "translate-x-0" : "-translate-x-full",
-          "lg:static lg:translate-x-0 lg:z-auto",
+          "lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 lg:z-auto",
           "flex flex-col",
         ].join(" ")}
       >
         {/* Header */}
-        <div className="px-4 pt-4 pb-3">
+        <div className="px-4 pt-5 pb-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="h-10 w-10 rounded-xl bg-white/10 flex items-center justify-center">
-                <Calendar className="h-5 w-5" />
+              <div className="h-10 w-10 rounded-xl bg-gray-100 flex items-center justify-center">
+                <Calendar className="h-5 w-5 text-black" />
               </div>
               <div className="leading-tight min-w-0">
-                <div className="text-base font-semibold truncate">Booking Pro</div>
-                <div className="text-xs text-white/60 truncate">Management System</div>
+                <div className="text-base font-normal truncate">Booking Pro</div>
+                <div className="text-xs text-gray-500 truncate font-light">Management System</div>
               </div>
             </div>
 
             <button
               onClick={onClose}
-              className="lg:hidden inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-white/10"
+              className="lg:hidden inline-flex h-9 w-9 items-center justify-center rounded-lg hover:bg-gray-100"
               aria-label="Schließen"
             >
               <X className="h-5 w-5" />
@@ -76,9 +76,9 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           </div>
 
           {/* User */}
-          <div className="mt-4 rounded-2xl bg-white/5 border border-white/10 p-3">
-            <div className="text-sm font-medium truncate">{user?.email ?? "—"}</div>
-            <div className="text-xs text-white/60">Administrator</div>
+          <div className="mt-4 rounded-xl bg-gray-50 border border-gray-200 p-3">
+            <div className="text-sm font-normal truncate">{user?.email ?? "—"}</div>
+            <div className="text-xs text-gray-500 font-light">Administrator</div>
           </div>
         </div>
 
@@ -93,26 +93,26 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
                 <li key={item.path}>
                   <Link
                     href={item.path}
-                    onClick={onClose} // mobil: beim Klick schließen
+                    onClick={onClose}
                     className={[
-                      "group flex items-center justify-between gap-3 rounded-2xl px-3 py-3",
+                      "group flex items-center justify-between gap-3 rounded-xl px-3 py-2.5",
                       "transition-colors",
-                      active ? "bg-white/10 border border-white/10" : "hover:bg-white/7",
+                      active ? "bg-gray-100 border border-gray-200" : "hover:bg-gray-50",
                     ].join(" ")}
                   >
                     <span className="flex items-center gap-3 min-w-0">
                       <span
                         className={[
-                          "h-9 w-9 rounded-xl flex items-center justify-center border",
-                          active ? "bg-white/10 border-white/15" : "bg-white/5 border-white/10 group-hover:bg-white/7",
+                          "h-8 w-8 rounded-lg flex items-center justify-center",
+                          active ? "bg-gray-200" : "bg-gray-50 group-hover:bg-gray-100",
                         ].join(" ")}
                       >
-                        <Icon className="h-5 w-5" />
+                        <Icon className="h-4 w-4 text-black" />
                       </span>
-                      <span className="font-medium truncate">{item.label}</span>
+                      <span className="font-normal truncate text-[15px]">{item.label}</span>
                     </span>
 
-                    <ChevronRight className="h-4 w-4 text-white/50" />
+                    <ChevronRight className="h-4 w-4 text-gray-400" />
                   </Link>
                 </li>
               )
@@ -121,13 +121,13 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         </nav>
 
         {/* Footer */}
-        <div className="p-3 border-t border-white/10">
+        <div className="p-3 border-t border-gray-200">
           <button
             onClick={handleSignOut}
-            className="w-full flex items-center justify-center gap-2 rounded-2xl px-4 py-3 bg-red-500/10 border border-red-400/20 hover:bg-red-500/15 transition-colors"
+            className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 bg-gray-50 border border-gray-200 hover:bg-gray-100 transition-colors"
           >
-            <LogOut className="h-5 w-5" />
-            <span className="font-semibold">Abmelden</span>
+            <LogOut className="h-4 w-4 text-black" />
+            <span className="font-normal text-[15px]">Abmelden</span>
           </button>
         </div>
       </aside>

@@ -1,35 +1,34 @@
-// Supabase Database Type Definitions
-export type Database = {
+interface Database {
   public: {
     Tables: {
       behandlungen: {
         Row: {
           id: string
           name: string
-          kategorie: string | null
-          preis_eur: number
           dauer_min: number
+          preis_eur: number
           color_hex: string | null
+          kategorie_id: string | null
           created_at: string
           updated_at: string
         }
         Insert: {
           id?: string
           name: string
-          kategorie?: string | null
-          preis_eur: number
           dauer_min: number
+          preis_eur: number
           color_hex?: string | null
+          kategorie_id?: string | null
           created_at?: string
           updated_at?: string
         }
         Update: {
           id?: string
           name?: string
-          kategorie?: string | null
-          preis_eur?: number
           dauer_min?: number
+          preis_eur?: number
           color_hex?: string | null
+          kategorie_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -38,39 +37,36 @@ export type Database = {
         Row: {
           id: string
           kunde_id: string
+          behandlung_id: string
           mitarbeiter_id: string
-          behandlung_id: string | null
-          filiale_id: string | null
-          start_at: string
-          end_at: string
-          status: "scheduled" | "confirmed" | "completed" | "cancelled" | "no_show"
-          notiz: string | null
+          datum: string
+          uhrzeit: string
+          status: string
+          notizen: string | null
           created_at: string
           updated_at: string
         }
         Insert: {
           id?: string
           kunde_id: string
+          behandlung_id: string
           mitarbeiter_id: string
-          behandlung_id?: string | null
-          filiale_id?: string | null
-          start_at: string
-          end_at: string
-          status?: "scheduled" | "confirmed" | "completed" | "cancelled" | "no_show"
-          notiz?: string | null
+          datum: string
+          uhrzeit: string
+          status?: string
+          notizen?: string | null
           created_at?: string
           updated_at?: string
         }
         Update: {
           id?: string
           kunde_id?: string
+          behandlung_id?: string
           mitarbeiter_id?: string
-          behandlung_id?: string | null
-          filiale_id?: string | null
-          start_at?: string
-          end_at?: string
-          status?: "scheduled" | "confirmed" | "completed" | "cancelled" | "no_show"
-          notiz?: string | null
+          datum?: string
+          uhrzeit?: string
+          status?: string
+          notizen?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -79,33 +75,35 @@ export type Database = {
         Row: {
           id: string
           name: string
-          address: string | null
-          phone: string | null
-          opening_hours: string | null
-          is_active: boolean
+          adresse: string | null
+          telefon: string | null
+          email: string | null
           created_at: string
           updated_at: string
         }
         Insert: {
           id?: string
           name: string
-          address?: string | null
-          phone?: string | null
-          opening_hours?: string | null
-          is_active?: boolean
+          adresse?: string | null
+          telefon?: string | null
+          email?: string | null
           created_at?: string
           updated_at?: string
         }
         Update: {
           id?: string
           name?: string
-          address?: string | null
-          phone?: string | null
-          opening_hours?: string | null
-          is_active?: boolean
+          adresse?: string | null
+          telefon?: string | null
+          email?: string | null
           created_at?: string
           updated_at?: string
         }
+      }
+      kategorien: {
+        Row: { id: string; name: string; color_hex: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; name: string; color_hex?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; name?: string; color_hex?: string | null; created_at?: string; updated_at?: string }
       }
       kunden: {
         Row: {
@@ -145,49 +143,43 @@ export type Database = {
       mitarbeiter: {
         Row: {
           id: string
-          name: string
+          vorname: string
+          nachname: string
+          email: string | null
+          telefon: string | null
           color_hex: string | null
           created_at: string
           updated_at: string
         }
         Insert: {
           id?: string
-          name: string
+          vorname: string
+          nachname: string
+          email?: string | null
+          telefon?: string | null
           color_hex?: string | null
           created_at?: string
           updated_at?: string
         }
         Update: {
           id?: string
-          name?: string
+          vorname?: string
+          nachname?: string
+          email?: string | null
+          telefon?: string | null
           color_hex?: string | null
           created_at?: string
           updated_at?: string
         }
       }
       profiles: {
-        Row: {
-          id: string
-          mitarbeiter_id: string | null
-          role: "super_admin" | "manager" | "staff"
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          id: string
-          mitarbeiter_id?: string | null
-          role?: "super_admin" | "manager" | "staff"
-          created_at?: string
-          updated_at?: string
-        }
-        Update: {
-          id?: string
-          mitarbeiter_id?: string | null
-          role?: "super_admin" | "manager" | "staff"
-          created_at?: string
-          updated_at?: string
-        }
+        Row: { id: string; email: string; role: string; created_at: string; updated_at: string }
+        Insert: { id?: string; email: string; role?: string; created_at?: string; updated_at?: string }
+        Update: { id?: string; email?: string; role?: string; created_at?: string; updated_at?: string }
       }
     }
   }
 }
+
+export type { Database }
+export type { Database as DatabaseType }
